@@ -1,10 +1,10 @@
 {
-	"name": "{{PACKAGE_NAME}}",
+	"name": "@side-quest/last30days",
 	"version": "0.0.0",
-	"description": "{{DESCRIPTION}}",
+	"description": "Research any topic from the last 30 days across Reddit, X, and web — engagement-ranked results",
 	"author": {
-		"name": "{{AUTHOR}}",
-		"url": "https://github.com/{{GITHUB_USER}}"
+		"name": "Nathan Vale",
+		"url": "https://github.com/nathanvale"
 	},
 	"license": "MIT",
 	"type": "module",
@@ -25,12 +25,12 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/{{GITHUB_USER}}/{{REPO_NAME}}.git"
+		"url": "git+https://github.com/nathanvale/last30days.git"
 	},
 	"bugs": {
-		"url": "https://github.com/{{GITHUB_USER}}/{{REPO_NAME}}/issues"
+		"url": "https://github.com/nathanvale/last30days/issues"
 	},
-	"homepage": "https://github.com/{{GITHUB_USER}}/{{REPO_NAME}}#readme",
+	"homepage": "https://github.com/nathanvale/last30days#readme",
 	"keywords": [
 		"typescript",
 		"bun",
@@ -70,7 +70,6 @@
 		"release": "changeset publish --provenance",
 		"release:snapshot:canary": "changeset version --snapshot canary && changeset publish --tag canary",
 		"security:audit": "npm audit",
-		"setup": "bun scripts/setup.ts",
 		"test": "bun test --recursive",
 		"test:ci": "TF_BUILD=true bun test --recursive",
 		"test:coverage": "bun test --coverage",
