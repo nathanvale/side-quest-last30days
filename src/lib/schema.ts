@@ -1,4 +1,4 @@
-/** Data schemas for last30days skill. */
+/** Data schemas for last-30-days skill. */
 
 /** Engagement metrics. */
 export interface Engagement {

@@ -1,4 +1,4 @@
-/** Output rendering for last30days skill. */
+/** Output rendering for last-30-days skill. */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import type { Report } from './schema.js'
 import { reportToDict } from './schema.js'
 
-const OUTPUT_DIR = join(homedir(), '.local', 'share', 'last30days', 'out')
+const OUTPUT_DIR = join(homedir(), '.local', 'share', 'last-30-days', 'out')
 
 /** Ensure output directory exists. */
 function ensureOutputDir(): void {
@@ -76,7 +76,7 @@ export function renderCompact(
 			'- `OPENAI_API_KEY` → Reddit threads with real upvotes & comments',
 		)
 		lines.push('- `XAI_API_KEY` → X posts with real likes & reposts')
-		lines.push('- Edit `~/.config/last30days/.env` to add keys')
+		lines.push('- Edit `~/.config/last-30-days/.env` to add keys')
 		lines.push('---')
 		lines.push('')
 	}
@@ -386,7 +386,7 @@ export function writeOutputs(
 	)
 	writeFileSync(join(OUTPUT_DIR, 'report.md'), renderFullReport(report))
 	writeFileSync(
-		join(OUTPUT_DIR, 'last30days.context.md'),
+		join(OUTPUT_DIR, 'last-30-days.context.md'),
 		renderContextSnippet(report),
 	)
 
@@ -412,5 +412,5 @@ export function writeOutputs(
 
 /** Get path to context file. */
 export function getContextPath(): string {
-	return join(OUTPUT_DIR, 'last30days.context.md')
+	return join(OUTPUT_DIR, 'last-30-days.context.md')
 }

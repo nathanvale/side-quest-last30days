@@ -1,5 +1,5 @@
 /**
- * @side-quest/last30days
+ * @side-quest/last-30-days
  *
  * Research any topic from the last 30 days across Reddit, X, and web.
  * Engagement-ranked results with scoring and deduplication.

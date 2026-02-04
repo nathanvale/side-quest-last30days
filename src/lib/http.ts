@@ -1,13 +1,13 @@
-/** HTTP utilities for last30days skill. */
+/** HTTP utilities for last-30-days skill. */
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_RETRIES = 3
 const RETRY_DELAY = 1000
-const USER_AGENT = 'last30days-skill/1.0 (Claude Code Skill)'
+const USER_AGENT = 'last-30-days-skill/1.0 (Claude Code Skill)'
 
 export const DEBUG =
-	process.env.LAST30DAYS_DEBUG?.toLowerCase() === '1' ||
-	process.env.LAST30DAYS_DEBUG?.toLowerCase() === 'true'
+	process.env.LAST_30_DAYS_DEBUG?.toLowerCase() === '1' ||
+	process.env.LAST_30_DAYS_DEBUG?.toLowerCase() === 'true'
 
 function log(msg: string): void {
 	if (DEBUG) {

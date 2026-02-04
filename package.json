@@ -1,5 +1,5 @@
 {
-	"name": "@side-quest/last30days",
+	"name": "@side-quest/last-30-days",
 	"version": "0.0.0",
 	"description": "Research any topic from the last 30 days across Reddit, X, and web — engagement-ranked results",
 	"author": {
@@ -18,7 +18,7 @@
 		"./package.json": "./package.json"
 	},
 	"bin": {
-		"last30days": "dist/cli.js"
+		"last-30-days": "dist/cli.js"
 	},
 	"files": [
 		"dist/**",
@@ -28,12 +28,12 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/nathanvale/last30days.git"
+		"url": "git+https://github.com/nathanvale/side-quest-last-30-days.git"
 	},
 	"bugs": {
-		"url": "https://github.com/nathanvale/last30days/issues"
+		"url": "https://github.com/nathanvale/side-quest-last-30-days/issues"
 	},
-	"homepage": "https://github.com/nathanvale/last30days#readme",
+	"homepage": "https://github.com/nathanvale/side-quest-last-30-days#readme",
 	"keywords": [
 		"typescript",
 		"bun",

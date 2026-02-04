@@ -1,4 +1,4 @@
-/** Caching utilities for last30days skill. */
+/** Caching utilities for last-30-days skill. */
 
 import { createHash } from 'node:crypto'
 import {
@@ -13,7 +13,7 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const CACHE_DIR = join(homedir(), '.cache', 'last30days')
+const CACHE_DIR = join(homedir(), '.cache', 'last-30-days')
 const DEFAULT_TTL_HOURS = 24
 const MODEL_CACHE_TTL_DAYS = 7
 

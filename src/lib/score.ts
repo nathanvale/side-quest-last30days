@@ -1,4 +1,4 @@
-/** Popularity-aware scoring for last30days skill. */
+/** Popularity-aware scoring for last-30-days skill. */
 
 import { recencyScore } from './dates.js'
 import type { Engagement, RedditItem, WebSearchItem, XItem } from './schema.js'

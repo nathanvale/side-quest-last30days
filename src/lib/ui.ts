@@ -1,4 +1,4 @@
-/** Terminal UI utilities for last30days skill. */
+/** Terminal UI utilities for last-30-days skill. */
 
 const IS_TTY = process.stderr.isTTY ?? false
 
@@ -11,7 +11,7 @@ const BOLD = '\x1b[1m'
 const DIM = '\x1b[2m'
 const RESET = '\x1b[0m'
 
-const MINI_BANNER = `${PURPLE}${BOLD}/last30days${RESET} ${DIM}· researching...${RESET}`
+const MINI_BANNER = `${PURPLE}${BOLD}/last-30-days${RESET} ${DIM}· researching...${RESET}`
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -125,7 +125,7 @@ export class ProgressDisplay {
 				`${DIM}Topic: ${RESET}${BOLD}${this.topic}${RESET}\n\n`,
 			)
 		} else {
-			process.stderr.write(`/last30days · researching: ${this.topic}\n`)
+			process.stderr.write(`/last-30-days · researching: ${this.topic}\n`)
 		}
 	}
 
@@ -232,7 +232,7 @@ export class ProgressDisplay {
 	showPromo(missing: string): void {
 		if (missing === 'both') {
 			process.stderr.write(
-				`\n${YELLOW}⚡ Add API keys to ~/.config/last30days/.env for Reddit & X data${RESET}\n`,
+				`\n${YELLOW}⚡ Add API keys to ~/.config/last-30-days/.env for Reddit & X data${RESET}\n`,
 			)
 		} else if (missing === 'reddit') {
 			process.stderr.write(

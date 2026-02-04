@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * last30days CLI - Research a topic from the last 30 days on Reddit + X.
+ * last-30-days CLI - Research a topic from the last 30 days on Reddit + X.
  *
  * Usage:
- *   last30days <topic> [options]
+ *   last-30-days <topic> [options]
  *
  * Options:
  *   --mock           Use fixtures instead of real API calls
@@ -184,7 +184,7 @@ async function main() {
 	const args = parseArgs(process.argv.slice(2))
 
 	if (args.debug) {
-		process.env.LAST30DAYS_DEBUG = '1'
+		process.env.LAST_30_DAYS_DEBUG = '1'
 	}
 
 	// Determine depth
@@ -197,7 +197,7 @@ async function main() {
 	if (!args.topic) {
 		process.stderr.write('Error: Please provide a topic to research.\n')
 		process.stderr.write(
-			'Usage: last30days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=auto|reddit|x|both]\n',
+			'Usage: last-30-days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=auto|reddit|x|both]\n',
 		)
 		process.exit(1)
 	}

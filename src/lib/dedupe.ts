@@ -1,4 +1,4 @@
-/** Near-duplicate detection for last30days skill. */
+/** Near-duplicate detection for last-30-days skill. */
 
 import type { RedditItem, WebSearchItem, XItem } from './schema.js'
 

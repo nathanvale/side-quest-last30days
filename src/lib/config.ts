@@ -1,10 +1,10 @@
-/** Environment and API key management for last30days skill. */
+/** Environment and API key management for last-30-days skill. */
 
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const CONFIG_DIR = join(homedir(), '.config', 'last30days')
+const CONFIG_DIR = join(homedir(), '.config', 'last-30-days')
 const CONFIG_FILE = join(CONFIG_DIR, '.env')
 
 /** Load environment variables from a file. */
@@ -36,7 +36,7 @@ function loadEnvFile(path: string): Record<string, string> {
 	return env
 }
 
-/** Load configuration from ~/.config/last30days/.env and environment. */
+/** Load configuration from ~/.config/last-30-days/.env and environment. */
 export function getConfig(): Record<string, string | null> {
 	const fileEnv = loadEnvFile(CONFIG_FILE)
 
@@ -102,7 +102,7 @@ export function validateSources(
 		if (requested === 'auto' || requested === 'web') return ['web', null]
 		return [
 			'web',
-			'No API keys configured. Using WebSearch fallback. Add keys to ~/.config/last30days/.env for Reddit/X.',
+			'No API keys configured. Using WebSearch fallback. Add keys to ~/.config/last-30-days/.env for Reddit/X.',
 		]
 	}
 
