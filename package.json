@@ -8,14 +8,17 @@
 	},
 	"license": "MIT",
 	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"main": "./dist/src/index.js",
+	"types": "./dist/src/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
 		},
 		"./package.json": "./package.json"
+	},
+	"bin": {
+		"last30days": "dist/cli.js"
 	},
 	"files": [
 		"dist/**",
@@ -80,7 +83,9 @@
 		"version:pre": "changeset version",
 		"watch:types": "tsc -p tsconfig.eslint.json --noEmit --watch"
 	},
-	"dependencies": {},
+	"dependencies": {
+		"@side-quest/core": "^0.1.1"
+	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.18.2",
 		"@biomejs/biome": "^2.3.7",

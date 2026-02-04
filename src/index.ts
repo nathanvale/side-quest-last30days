@@ -1,11 +1,70 @@
 /**
- * Main entry point for the library.
+ * @side-quest/last30days
  *
- * Replace this with your actual exports.
+ * Research any topic from the last 30 days across Reddit, X, and web.
+ * Engagement-ranked results with scoring and deduplication.
  */
 
-export function greet(name: string): string {
-	return `Hello, ${name}!`
-}
-
-export const VERSION = '0.0.0'
+// Config
+export { getAvailableSources, getConfig, getMissingKeys } from './lib/config.js'
+// Date utilities
+export {
+	daysAgo,
+	getDateConfidence,
+	getDateRange,
+	parseDate,
+	recencyScore,
+	timestampToDate,
+} from './lib/dates.js'
+// Deduplication
+export {
+	dedupeItems,
+	dedupeReddit,
+	dedupeWebsearch,
+	dedupeX,
+	getNgrams,
+	jaccardSimilarity,
+	normalizeText,
+} from './lib/dedupe.js'
+// Normalization
+export {
+	filterByDateRange,
+	normalizeRedditItems,
+	normalizeXItems,
+} from './lib/normalize.js'
+// Rendering
+export {
+	renderCompact,
+	renderContextSnippet,
+	renderFullReport,
+	writeOutputs,
+} from './lib/render.js'
+// Schema types
+export type {
+	Comment,
+	Engagement,
+	RedditItem,
+	Report,
+	SubScores,
+	WebSearchItem,
+	XItem,
+} from './lib/schema.js'
+// Schema factories
+export { createReport } from './lib/schema.js'
+// Scoring
+export {
+	scoreRedditItems,
+	scoreWebsearchItems,
+	scoreXItems,
+	sortItems,
+} from './lib/score.js'
+// WebSearch
+export {
+	extractDateFromSnippet,
+	extractDateFromUrl,
+	extractDateSignals,
+	extractDomain,
+	isExcludedDomain,
+	normalizeWebsearchItems,
+	parseWebsearchResults,
+} from './lib/websearch.js'
