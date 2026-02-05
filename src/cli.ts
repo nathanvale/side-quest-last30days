@@ -453,7 +453,9 @@ async function main() {
 	}
 }
 
-main().catch((e) => {
-	process.stderr.write(`Fatal error: ${e}\n`)
-	process.exit(1)
-})
+main()
+	.then(() => process.exit(0))
+	.catch((e) => {
+		process.stderr.write(`Fatal error: ${e}\n`)
+		process.exit(1)
+	})
