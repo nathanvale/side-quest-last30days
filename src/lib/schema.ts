@@ -79,6 +79,7 @@ export interface WebSearchItem {
 /** Full research report. */
 export interface Report {
 	topic: string
+	days: number
 	range_from: string
 	range_to: string
 	generated_at: string
@@ -118,6 +119,7 @@ export function engagementToDict(
 export function reportToDict(report: Report): Record<string, unknown> {
 	const d: Record<string, unknown> = {
 		topic: report.topic,
+		days: report.days,
 		range: { from: report.range_from, to: report.range_to },
 		generated_at: report.generated_at,
 		mode: report.mode,
@@ -222,9 +224,11 @@ export function createReport(
 	mode: string,
 	openaiModel: string | null = null,
 	xaiModel: string | null = null,
+	days = 30,
 ): Report {
 	return {
 		topic,
+		days,
 		range_from: fromDate,
 		range_to: toDate,
 		generated_at: new Date().toISOString(),
@@ -251,6 +255,11 @@ export function reportFromDict(data: Record<string, unknown>): Report {
 	const rangeFrom =
 		rangeData.from ?? (data.range_from as string | undefined) ?? ''
 	const rangeTo = rangeData.to ?? (data.range_to as string | undefined) ?? ''
+	const parsedDays =
+		typeof data.days === 'number' && Number.isInteger(data.days)
+			? data.days
+			: 30
+	const days = parsedDays >= 1 && parsedDays <= 365 ? parsedDays : 30
 
 	const redditItems = ((data.reddit as unknown[]) ?? []).map((r: unknown) => {
 		const rd = r as Record<string, unknown>
@@ -309,6 +318,7 @@ export function reportFromDict(data: Record<string, unknown>): Report {
 
 	return {
 		topic: data.topic as string,
+		days,
 		range_from: rangeFrom,
 		range_to: rangeTo,
 		generated_at: data.generated_at as string,

@@ -9,6 +9,7 @@
  *   --mock           Use fixtures instead of real API calls
  *   --emit=MODE      Output mode: compact|json|md|context|path (default: compact)
  *   --sources=MODE   Source selection: auto|reddit|x|both (default: auto)
+ *   --days=N         Lookback window in days (default: 30, range: 1-365)
  *   --quick          Faster research with fewer sources
  *   --deep           Comprehensive research with more sources
  *   --debug          Enable verbose debug logging
@@ -64,6 +65,7 @@ Options:
                      reddit   Reddit only (requires OPENAI_API_KEY)
                      x        X/Twitter only (requires XAI_API_KEY)
                      both     Reddit + X (requires both keys)
+  --days=N         Lookback window in days (default: 30, range: 1-365)
   --quick          Faster research with fewer results
   --deep           Comprehensive research with more results
   --include-web    Include general web search alongside Reddit/X
@@ -79,10 +81,17 @@ Config:
 Examples:
   last-30-days "Claude Code"
   last-30-days "React Server Components" --deep --emit=json
-  last-30-days "Bun 1.2" --sources=reddit --include-web`
+  last-30-days "Bun 1.2" --sources=reddit --include-web
+  last-30-days "Bun 1.2" --days=7 --emit=json`
 
 	console.log(text)
 	process.exit(0)
+}
+
+/** Parse days flag value as a base-10 integer. */
+function parseDaysValue(value: string): number {
+	if (!/^\d+$/.test(value)) return Number.NaN
+	return Number(value)
 }
 
 /** Parse CLI arguments. */
@@ -95,8 +104,10 @@ function parseArgs(args: string[]) {
 	let deep = false
 	let debug = false
 	let includeWeb = false
+	let days = 30
 
-	for (const arg of args) {
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]!
 		if (arg === '--help' || arg === '-h') {
 			showHelp()
 		} else if (arg === '--mock') {
@@ -105,6 +116,16 @@ function parseArgs(args: string[]) {
 			emit = arg.slice('--emit='.length)
 		} else if (arg.startsWith('--sources=')) {
 			sources = arg.slice('--sources='.length)
+		} else if (arg.startsWith('--days=')) {
+			days = parseDaysValue(arg.slice('--days='.length))
+		} else if (arg === '--days') {
+			const value = args[i + 1]
+			if (!value || value.startsWith('-')) {
+				days = Number.NaN
+			} else {
+				days = parseDaysValue(value)
+				i += 1
+			}
 		} else if (arg === '--quick') {
 			quick = true
 		} else if (arg === '--deep') {
@@ -118,7 +139,7 @@ function parseArgs(args: string[]) {
 		}
 	}
 
-	return { topic, mock, emit, sources, quick, deep, debug, includeWeb }
+	return { topic, mock, emit, sources, quick, deep, debug, includeWeb, days }
 }
 
 async function searchRedditTask(
@@ -229,6 +250,14 @@ async function main() {
 		process.env.LAST_30_DAYS_DEBUG = '1'
 	}
 
+	// Validate --days
+	if (!Number.isInteger(args.days) || args.days < 1 || args.days > 365) {
+		process.stderr.write(
+			'Error: --days must be an integer between 1 and 365.\n',
+		)
+		process.exit(1)
+	}
+
 	// Determine depth
 	if (args.quick && args.deep) {
 		process.stderr.write('Error: Cannot use both --quick and --deep\n')
@@ -269,7 +298,7 @@ async function main() {
 	}
 
 	// Get date range
-	const [fromDate, toDate] = getDateRange(30)
+	const [fromDate, toDate] = getDateRange(args.days)
 	const missingKeys = config.getMissingKeys(cfg)
 
 	// Initialize progress
@@ -418,8 +447,8 @@ async function main() {
 	)
 	const filteredX = normalize.filterByDateRange(normalizedX, fromDate, toDate)
 
-	const scoredReddit = score.scoreRedditItems(filteredReddit)
-	const scoredX = score.scoreXItems(filteredX)
+	const scoredReddit = score.scoreRedditItems(filteredReddit, args.days)
+	const scoredX = score.scoreXItems(filteredX, args.days)
 
 	const sortedReddit = score.sortItems(scoredReddit)
 	const sortedX = score.sortItems(scoredX)
@@ -437,6 +466,7 @@ async function main() {
 		mode,
 		selectedModels.openai,
 		selectedModels.xai,
+		args.days,
 	)
 	report.reddit = dedupedReddit
 	report.x = dedupedX
@@ -481,7 +511,9 @@ async function main() {
 		console.log(
 			'EXCLUDE: reddit.com, x.com, twitter.com (already covered above)',
 		)
-		console.log('INCLUDE: blogs, docs, news, tutorials from the last 30 days')
+		console.log(
+			`INCLUDE: blogs, docs, news, tutorials from the last ${args.days} days`,
+		)
 		console.log('')
 		console.log(
 			'After searching, synthesize WebSearch results WITH the Reddit/X',
