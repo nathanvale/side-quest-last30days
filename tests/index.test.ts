@@ -14,10 +14,14 @@ import {
 	normalizeText,
 	parseDate,
 	recencyScore,
+	renderCompact,
+	renderContextSnippet,
+	renderFullReport,
+	scoreRedditItems,
 	timestampToDate,
 } from '../src/index'
 
-import { reportToDict } from '../src/lib/schema'
+import { reportFromDict, reportToDict } from '../src/lib/schema'
 
 // ---------------------------------------------------------------------------
 // dates
@@ -73,10 +77,15 @@ describe('dates', () => {
 		expect(daysAgo(from)).toBeGreaterThanOrEqual(29)
 	})
 
-	test('recencyScore returns 0-1 range', () => {
-		const s = recencyScore(15, 30)
-		expect(s).toBeGreaterThanOrEqual(0)
-		expect(s).toBeLessThanOrEqual(1)
+	test('recencyScore returns 0-100 range', () => {
+		const [from, to] = getDateRange(30)
+		const latest = recencyScore(to, 30)
+		const oldest = recencyScore(from, 30)
+		expect(latest).toBeGreaterThanOrEqual(0)
+		expect(latest).toBeLessThanOrEqual(100)
+		expect(oldest).toBeGreaterThanOrEqual(0)
+		expect(oldest).toBeLessThanOrEqual(100)
+		expect(latest).toBeGreaterThanOrEqual(oldest)
 	})
 })
 
@@ -172,6 +181,7 @@ describe('schema', () => {
 			'grok-3',
 		)
 		expect(report.topic).toBe('test topic')
+		expect(report.days).toBe(30)
 		expect(report.range_from).toBe('2025-01-01')
 		expect(report.range_to).toBe('2025-01-31')
 		expect(report.mode).toBe('both')
@@ -182,13 +192,169 @@ describe('schema', () => {
 		expect(report.web).toEqual([])
 	})
 
+	test('createReport accepts custom days', () => {
+		const report = createReport('test', '2025-01-24', '2025-01-31', 'both', null, null, 7)
+		expect(report.days).toBe(7)
+	})
+
 	test('reportToDict serializes report', () => {
 		const report = createReport('test', '2025-01-01', '2025-01-31', 'both', null, null)
 		const dict = reportToDict(report)
 		expect(dict.topic).toBe('test')
+		expect(dict.days).toBe(30)
 		const range = dict.range as { from: string; to: string }
 		expect(range.from).toBe('2025-01-01')
 		expect(range.to).toBe('2025-01-31')
 		expect(Array.isArray(dict.reddit)).toBe(true)
+	})
+
+	test('reportFromDict defaults days to 30 for older serialized payloads', () => {
+		const report = reportFromDict({
+			topic: 'legacy-report',
+			range: { from: '2025-01-01', to: '2025-01-31' },
+			generated_at: '2025-01-31T00:00:00.000Z',
+			mode: 'both',
+			reddit: [],
+			x: [],
+			web: [],
+		})
+		expect(report.days).toBe(30)
+	})
+
+	test('reportFromDict keeps valid serialized days value', () => {
+		const report = reportFromDict({
+			topic: 'new-report',
+			days: 14,
+			range: { from: '2025-01-17', to: '2025-01-31' },
+			generated_at: '2025-01-31T00:00:00.000Z',
+			mode: 'both',
+			reddit: [],
+			x: [],
+			web: [],
+		})
+		expect(report.days).toBe(14)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// scoring
+// ---------------------------------------------------------------------------
+describe('scoring', () => {
+	test('scoreRedditItems uses provided maxDays for recency scoring', () => {
+		const [tenDaysAgo] = getDateRange(10)
+		const base = {
+			id: 'r1',
+			title: 'Sample thread',
+			url: 'https://reddit.com/r/test/comments/1',
+			subreddit: 'test',
+			date: tenDaysAgo,
+			date_confidence: 'high',
+			engagement: null,
+			top_comments: [],
+			comment_insights: [],
+			relevance: 0,
+			why_relevant: 'test',
+			subs: { relevance: 0, recency: 0, engagement: 0 },
+			score: 0,
+		}
+
+		const recency30 = scoreRedditItems([{ ...base }], 30)[0]!.subs.recency
+		const recency7 = scoreRedditItems([{ ...base }], 7)[0]!.subs.recency
+		expect(recency30).toBeGreaterThan(recency7)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// render
+// ---------------------------------------------------------------------------
+describe('render', () => {
+	test('renderContextSnippet uses report days in title', () => {
+		const report = createReport('testing', '2025-01-24', '2025-01-31', 'both', null, null, 7)
+		expect(renderContextSnippet(report)).toContain('Last 7 Days')
+	})
+
+	test('renderFullReport uses report days in heading', () => {
+		const report = createReport('testing', '2025-01-24', '2025-01-31', 'both', null, null, 7)
+		expect(renderFullReport(report)).toContain('Last 7 Days Research Report')
+	})
+
+	test('renderCompact sparse warning uses report days', () => {
+		const report = createReport('testing', '2025-01-17', '2025-01-31', 'both', null, null, 14)
+		expect(renderCompact(report)).toContain('last 14 days')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// cli
+// ---------------------------------------------------------------------------
+describe('cli', () => {
+	function runCli(args: string[]) {
+		const testHome = '/tmp/last-30-days-test-home'
+		return Bun.spawnSync({
+			cmd: [process.execPath, 'run', 'src/cli.ts', ...args],
+			cwd: process.cwd(),
+			env: { ...process.env, HOME: testHome },
+			stdout: 'pipe',
+			stderr: 'pipe',
+		})
+	}
+
+	test('defaults to 30-day window in JSON output', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(30)
+	})
+
+	test('accepts --days=7', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--days=7'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(7)
+	})
+
+	test('accepts --days 7', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--days', '7'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(7)
+	})
+
+	test('rejects invalid --days value', () => {
+		const result = runCli(['test topic', '--mock', '--days=abc'])
+		expect(result.exitCode).toBe(1)
+		expect(new TextDecoder().decode(result.stderr)).toContain(
+			'--days must be an integer between 1 and 365',
+		)
+	})
+
+	test('rejects --days=0', () => {
+		const result = runCli(['test topic', '--mock', '--days=0'])
+		expect(result.exitCode).toBe(1)
+		expect(new TextDecoder().decode(result.stderr)).toContain(
+			'--days must be an integer between 1 and 365',
+		)
+	})
+
+	test('rejects --days=366', () => {
+		const result = runCli(['test topic', '--mock', '--days=366'])
+		expect(result.exitCode).toBe(1)
+		expect(new TextDecoder().decode(result.stderr)).toContain(
+			'--days must be an integer between 1 and 365',
+		)
+	})
+
+	test('rejects --days with missing value', () => {
+		const result = runCli(['test topic', '--mock', '--days'])
+		expect(result.exitCode).toBe(1)
+		expect(new TextDecoder().decode(result.stderr)).toContain(
+			'--days must be an integer between 1 and 365',
+		)
 	})
 })
