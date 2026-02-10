@@ -1,6 +1,6 @@
 {
 	"name": "@side-quest/last-30-days",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Research any topic from the last 30 days across Reddit, X, and web — engagement-ranked results",
 	"author": {
 		"name": "Nathan Vale",

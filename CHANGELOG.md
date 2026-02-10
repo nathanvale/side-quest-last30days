@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0
+
+### Minor Changes
+
+- [#8](https://github.com/nathanvale/side-quest-last-30-days/pull/8) [`1504d92`](https://github.com/nathanvale/side-quest-last-30-days/commit/1504d92501d0a4095ec5deabb2912bb37729cbae) Thanks [@nathanvale](https://github.com/nathanvale)! - feat: add --days=N CLI parameter for configurable lookback window (1-365, default 30)
+
 ## 0.0.1
 
 ### Patch Changes
