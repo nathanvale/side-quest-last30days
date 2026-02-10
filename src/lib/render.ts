@@ -14,7 +14,7 @@ function ensureOutputDir(): void {
 	mkdirSync(OUTPUT_DIR, { recursive: true })
 }
 
-/** Assess how much data is actually from the last 30 days. */
+/** Assess how much data is actually from the configured date range. */
 function assessDataFreshness(report: Report) {
 	const redditRecent = report.reddit.filter(
 		(r) => r.date && r.date >= report.range_from,
@@ -54,7 +54,7 @@ export function renderCompact(
 	const freshness = assessDataFreshness(report)
 	if (freshness.isSparse) {
 		lines.push(
-			'**⚠️ LIMITED RECENT DATA** - Few discussions from the last 30 days.',
+			`**⚠️ LIMITED RECENT DATA** - Few discussions from the last ${report.days} days.`,
 		)
 		lines.push(
 			`Only ${freshness.totalRecent} item(s) confirmed from ${report.range_from} to ${report.range_to}.`,
@@ -226,7 +226,7 @@ export function renderCompact(
 /** Render reusable context snippet. */
 export function renderContextSnippet(report: Report): string {
 	const lines: string[] = []
-	lines.push(`# Context: ${report.topic} (Last 30 Days)`)
+	lines.push(`# Context: ${report.topic} (Last ${report.days} Days)`)
 	lines.push('')
 	lines.push(
 		`*Generated: ${report.generated_at.slice(0, 10)} | Sources: ${report.mode}*`,
@@ -271,7 +271,7 @@ export function renderContextSnippet(report: Report): string {
 export function renderFullReport(report: Report): string {
 	const lines: string[] = []
 
-	lines.push(`# ${report.topic} - Last 30 Days Research Report`)
+	lines.push(`# ${report.topic} - Last ${report.days} Days Research Report`)
 	lines.push('')
 	lines.push(`**Generated:** ${report.generated_at}`)
 	lines.push(`**Date Range:** ${report.range_from} to ${report.range_to}`)

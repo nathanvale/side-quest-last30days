@@ -79,7 +79,10 @@ function normalizeTo100(
 }
 
 /** Compute scores for Reddit items. */
-export function scoreRedditItems(items: RedditItem[]): RedditItem[] {
+export function scoreRedditItems(
+	items: RedditItem[],
+	maxDays = 30,
+): RedditItem[] {
 	if (items.length === 0) return items
 
 	const engRaw = items.map((item) =>
@@ -90,7 +93,7 @@ export function scoreRedditItems(items: RedditItem[]): RedditItem[] {
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i]!
 		const relScore = Math.floor(item.relevance * 100)
-		const recScore = recencyScore(item.date)
+		const recScore = recencyScore(item.date, maxDays)
 		const engScore =
 			engNormalized[i] != null
 				? Math.floor(engNormalized[i]!)
@@ -114,7 +117,7 @@ export function scoreRedditItems(items: RedditItem[]): RedditItem[] {
 }
 
 /** Compute scores for X items. */
-export function scoreXItems(items: XItem[]): XItem[] {
+export function scoreXItems(items: XItem[], maxDays = 30): XItem[] {
 	if (items.length === 0) return items
 
 	const engRaw = items.map((item) => computeXEngagementRaw(item.engagement))
@@ -123,7 +126,7 @@ export function scoreXItems(items: XItem[]): XItem[] {
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i]!
 		const relScore = Math.floor(item.relevance * 100)
-		const recScore = recencyScore(item.date)
+		const recScore = recencyScore(item.date, maxDays)
 		const engScore =
 			engNormalized[i] != null
 				? Math.floor(engNormalized[i]!)
@@ -147,12 +150,15 @@ export function scoreXItems(items: XItem[]): XItem[] {
 }
 
 /** Compute scores for WebSearch items WITHOUT engagement metrics. */
-export function scoreWebsearchItems(items: WebSearchItem[]): WebSearchItem[] {
+export function scoreWebsearchItems(
+	items: WebSearchItem[],
+	maxDays = 30,
+): WebSearchItem[] {
 	if (items.length === 0) return items
 
 	for (const item of items) {
 		const relScore = Math.floor(item.relevance * 100)
-		const recScore = recencyScore(item.date)
+		const recScore = recencyScore(item.date, maxDays)
 
 		item.subs = { relevance: relScore, recency: recScore, engagement: 0 }
 
