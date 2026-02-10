@@ -45,6 +45,46 @@ function loadFixture(name: string): Record<string, unknown> {
 	}
 }
 
+/** Print usage information and exit. */
+function showHelp(): never {
+	const text = `last-30-days - Research any topic from the last 30 days across Reddit, X, and web.
+
+Usage:
+  last-30-days <topic> [options]
+
+Options:
+  --emit=MODE      Output mode (default: compact)
+                     compact  Markdown summary for Claude to synthesize
+                     json     Full report as JSON
+                     md       Full markdown report
+                     context  Reusable context snippet
+                     path     Print path to context file
+  --sources=MODE   Source selection (default: auto)
+                     auto     Use all available API keys
+                     reddit   Reddit only (requires OPENAI_API_KEY)
+                     x        X/Twitter only (requires XAI_API_KEY)
+                     both     Reddit + X (requires both keys)
+  --quick          Faster research with fewer results
+  --deep           Comprehensive research with more results
+  --include-web    Include general web search alongside Reddit/X
+  --mock           Use fixture data instead of real API calls
+  --debug          Enable verbose debug logging
+  -h, --help       Show this help message
+
+Config:
+  API keys are loaded from environment variables or ~/.config/last-30-days/.env
+    OPENAI_API_KEY   Required for Reddit search (via OpenAI Responses API)
+    XAI_API_KEY      Required for X search (via xAI Responses API)
+
+Examples:
+  last-30-days "Claude Code"
+  last-30-days "React Server Components" --deep --emit=json
+  last-30-days "Bun 1.2" --sources=reddit --include-web`
+
+	console.log(text)
+	process.exit(0)
+}
+
 /** Parse CLI arguments. */
 function parseArgs(args: string[]) {
 	let topic = ''
@@ -57,7 +97,9 @@ function parseArgs(args: string[]) {
 	let includeWeb = false
 
 	for (const arg of args) {
-		if (arg === '--mock') {
+		if (arg === '--help' || arg === '-h') {
+			showHelp()
+		} else if (arg === '--mock') {
 			mock = true
 		} else if (arg.startsWith('--emit=')) {
 			emit = arg.slice('--emit='.length)
@@ -196,9 +238,8 @@ async function main() {
 
 	if (!args.topic) {
 		process.stderr.write('Error: Please provide a topic to research.\n')
-		process.stderr.write(
-			'Usage: last-30-days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=auto|reddit|x|both]\n',
-		)
+		process.stderr.write('Usage: last-30-days <topic> [options]\n')
+		process.stderr.write('Run last-30-days --help for full usage.\n')
 		process.exit(1)
 	}
 
