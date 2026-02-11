@@ -14,14 +14,18 @@
  *   --deep           Comprehensive research with more sources
  *   --debug          Enable verbose debug logging
  *   --include-web    Include general web search alongside Reddit/X
+ *   --refresh        Bypass cache reads and force fresh search
+ *   --no-cache       Disable cache reads and writes
  */
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as cache from './lib/cache.js'
 import * as config from './lib/config.js'
 import { getDateRange } from './lib/dates.js'
 import * as dedupe from './lib/dedupe.js'
+import { RateLimitError } from './lib/http.js'
 import * as models from './lib/models.js'
 import * as normalize from './lib/normalize.js'
 import * as openaiReddit from './lib/openai-reddit.js'
@@ -69,6 +73,8 @@ Options:
   --quick          Faster research with fewer results
   --deep           Comprehensive research with more results
   --include-web    Include general web search alongside Reddit/X
+  --refresh        Bypass cache reads and force fresh search
+  --no-cache       Disable cache reads and writes
   --mock           Use fixture data instead of real API calls
   --debug          Enable verbose debug logging
   -h, --help       Show this help message
@@ -104,6 +110,8 @@ function parseArgs(args: string[]) {
 	let deep = false
 	let debug = false
 	let includeWeb = false
+	let refresh = false
+	let noCache = false
 	let days = 30
 
 	for (let i = 0; i < args.length; i++) {
@@ -134,12 +142,28 @@ function parseArgs(args: string[]) {
 			debug = true
 		} else if (arg === '--include-web') {
 			includeWeb = true
+		} else if (arg === '--refresh') {
+			refresh = true
+		} else if (arg === '--no-cache') {
+			noCache = true
 		} else if (!arg.startsWith('-')) {
 			topic = topic ? `${topic} ${arg}` : arg
 		}
 	}
 
-	return { topic, mock, emit, sources, quick, deep, debug, includeWeb, days }
+	return {
+		topic,
+		mock,
+		emit,
+		sources,
+		quick,
+		deep,
+		debug,
+		includeWeb,
+		refresh,
+		noCache,
+		days,
+	}
 }
 
 async function searchRedditTask(
@@ -172,7 +196,13 @@ async function searchRedditTask(
 			)
 		} catch (e) {
 			raw = { error: String(e) }
-			error = `API error: ${e}`
+			if (e instanceof RateLimitError) {
+				error = e.retryable
+					? `Rate limited (transient): ${e.message}`
+					: `Quota/billing limit: ${e.message}`
+			} else {
+				error = `API error: ${e}`
+			}
 		}
 	}
 
@@ -235,7 +265,13 @@ async function searchXTask(
 			)
 		} catch (e) {
 			raw = { error: String(e) }
-			error = `API error: ${e}`
+			if (e instanceof RateLimitError) {
+				error = e.retryable
+					? `Rate limited (transient): ${e.message}`
+					: `Quota/billing limit: ${e.message}`
+			} else {
+				error = `API error: ${e}`
+			}
 		}
 	}
 

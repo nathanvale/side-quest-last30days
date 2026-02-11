@@ -26,6 +26,15 @@ export {
 	jaccardSimilarity,
 	normalizeText,
 } from './lib/dedupe.js'
+// HTTP / retry
+export {
+	backoffDelay,
+	HTTPError,
+	isRetryableRateLimit,
+	parseRateLimitResetMs,
+	parseRetryAfterMs,
+	RateLimitError,
+} from './lib/http.js'
 // Normalization
 export {
 	filterByDateRange,

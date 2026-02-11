@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+	backoffDelay,
 	createReport,
 	daysAgo,
 	extractDateFromSnippet,
@@ -9,10 +10,15 @@ import {
 	getDateConfidence,
 	getDateRange,
 	getNgrams,
+	HTTPError,
 	isExcludedDomain,
+	isRetryableRateLimit,
 	jaccardSimilarity,
 	normalizeText,
 	parseDate,
+	parseRateLimitResetMs,
+	parseRetryAfterMs,
+	RateLimitError,
 	recencyScore,
 	renderCompact,
 	renderContextSnippet,
@@ -281,6 +287,206 @@ describe('render', () => {
 	test('renderCompact sparse warning uses report days', () => {
 		const report = createReport('testing', '2025-01-17', '2025-01-31', 'both', null, null, 14)
 		expect(renderCompact(report)).toContain('last 14 days')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: 429 classification
+// ---------------------------------------------------------------------------
+describe('429 classification', () => {
+	test('transient rate-limit body is retryable', () => {
+		const body = JSON.stringify({
+			error: { type: 'rate_limit_exceeded', message: 'Rate limit reached' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(true)
+	})
+
+	test('insufficient_quota code is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { code: 'insufficient_quota', message: 'You exceeded your quota' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('billing_hard_limit_reached is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { code: 'billing_hard_limit_reached', message: 'Billing limit' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('quota exceeded in message is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { type: 'error', message: 'Quota exceeded for this org' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('null body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit(null)).toBe(true)
+	})
+
+	test('empty body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit('')).toBe(true)
+	})
+
+	test('malformed JSON body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit('not json')).toBe(true)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: backoff
+// ---------------------------------------------------------------------------
+describe('backoff', () => {
+	test('backoffDelay is bounded by MAX_RETRY_DELAY (30s)', () => {
+		for (let i = 0; i < 10; i++) {
+			expect(backoffDelay(i)).toBeLessThanOrEqual(30_000)
+		}
+	})
+
+	test('backoffDelay is generally increasing for early attempts', () => {
+		// Run multiple times to account for jitter
+		const results: number[][] = []
+		for (let run = 0; run < 10; run++) {
+			results.push([0, 1, 2, 3, 4].map((a) => backoffDelay(a)))
+		}
+		// Average across runs to smooth jitter
+		const avgs = [0, 1, 2, 3, 4].map(
+			(i) => results.reduce((sum, r) => sum + r[i]!, 0) / results.length,
+		)
+		expect(avgs[1]!).toBeGreaterThan(avgs[0]!)
+		expect(avgs[2]!).toBeGreaterThan(avgs[1]!)
+		expect(avgs[3]!).toBeGreaterThan(avgs[2]!)
+	})
+
+	test('backoffDelay attempt 0 is at least 1000ms', () => {
+		// base = 1000 * 2^0 = 1000, plus jitter [0, 1000)
+		expect(backoffDelay(0)).toBeGreaterThanOrEqual(1000)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: header parsing
+// ---------------------------------------------------------------------------
+describe('parseRetryAfterMs', () => {
+	test('parses integer seconds', () => {
+		expect(parseRetryAfterMs('5')).toBe(5000)
+	})
+
+	test('parses decimal seconds', () => {
+		expect(parseRetryAfterMs('1.5')).toBe(1500)
+	})
+
+	test('parses zero seconds', () => {
+		expect(parseRetryAfterMs('0')).toBe(0)
+	})
+
+	test('returns null for null input', () => {
+		expect(parseRetryAfterMs(null)).toBeNull()
+	})
+
+	test('returns null for empty string', () => {
+		expect(parseRetryAfterMs('')).toBeNull()
+	})
+
+	test('parses HTTP date format', () => {
+		const futureDate = new Date(Date.now() + 10_000).toUTCString()
+		const result = parseRetryAfterMs(futureDate)
+		expect(result).toBeGreaterThan(0)
+		expect(result!).toBeLessThan(15_000)
+	})
+})
+
+describe('parseRateLimitResetMs', () => {
+	test('parses "1s" to 1000ms', () => {
+		expect(parseRateLimitResetMs('1s')).toBe(1000)
+	})
+
+	test('parses "6m0s" to 360000ms', () => {
+		expect(parseRateLimitResetMs('6m0s')).toBe(360_000)
+	})
+
+	test('parses "1m30s" to 90000ms', () => {
+		expect(parseRateLimitResetMs('1m30s')).toBe(90_000)
+	})
+
+	test('parses "250ms" to 250ms', () => {
+		expect(parseRateLimitResetMs('250ms')).toBe(250)
+	})
+
+	test('parses "1h2m3s" to 3723000ms', () => {
+		expect(parseRateLimitResetMs('1h2m3s')).toBe(3_723_000)
+	})
+
+	test('parses bare numeric as seconds', () => {
+		expect(parseRateLimitResetMs('5')).toBe(5000)
+	})
+
+	test('returns null for sentinel "0"', () => {
+		expect(parseRateLimitResetMs('0')).toBeNull()
+	})
+
+	test('returns null for sentinel "-1"', () => {
+		expect(parseRateLimitResetMs('-1')).toBeNull()
+	})
+
+	test('returns null for null', () => {
+		expect(parseRateLimitResetMs(null)).toBeNull()
+	})
+
+	test('returns null for empty string', () => {
+		expect(parseRateLimitResetMs('')).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: RateLimitError shape
+// ---------------------------------------------------------------------------
+describe('RateLimitError', () => {
+	test('extends HTTPError with correct fields', () => {
+		const err = new RateLimitError('rate limited', {
+			body: '{"error":{}}',
+			retriesAttempted: 3,
+			retryable: true,
+			retryAfterMs: 5000,
+			ratelimitResetMs: 10_000,
+			method: 'POST',
+			url: 'https://api.openai.com/v1/responses',
+			requestId: 'req_123',
+		})
+		expect(err).toBeInstanceOf(HTTPError)
+		expect(err).toBeInstanceOf(RateLimitError)
+		expect(err.name).toBe('RateLimitError')
+		expect(err.status_code).toBe(429)
+		expect(err.retries_attempted).toBe(3)
+		expect(err.retryable).toBe(true)
+		expect(err.retry_after_ms).toBe(5000)
+		expect(err.ratelimit_reset_ms).toBe(10_000)
+		expect(err.method).toBe('POST')
+		expect(err.url).toBe('https://api.openai.com/v1/responses')
+		expect(err.request_id).toBe('req_123')
+	})
+
+	test('non-retryable RateLimitError has retryable=false', () => {
+		const err = new RateLimitError('quota exceeded', {
+			retriesAttempted: 1,
+			retryable: false,
+			errorCode: 'insufficient_quota',
+		})
+		expect(err.retryable).toBe(false)
+		expect(err.error_code).toBe('insufficient_quota')
+	})
+
+	test('defaults optional fields to null', () => {
+		const err = new RateLimitError('limited', {
+			retriesAttempted: 1,
+			retryable: true,
+		})
+		expect(err.retry_after_ms).toBeNull()
+		expect(err.ratelimit_reset_ms).toBeNull()
+		expect(err.body).toBeNull()
+		expect(err.request_id).toBeNull()
 	})
 })
 

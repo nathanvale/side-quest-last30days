@@ -7,6 +7,9 @@ const MODEL_FALLBACK_ORDER = ['gpt-4o', 'gpt-4o-mini']
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 
+/** Cache-busting version for Reddit search prompt behavior. */
+export const REDDIT_PROMPT_VERSION = '2026-02-11-v1'
+
 /** Depth configurations: [min, max] threads to request. */
 const DEPTH_CONFIG: Record<string, [number, number]> = {
 	quick: [15, 25],
