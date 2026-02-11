@@ -59,8 +59,16 @@ Return JSON:
   ]
 }`
 
-/** Check if error is due to model access/verification issues. */
-function isModelAccessError(error: http.HTTPError): boolean {
+/** Models known to support the `filters` param on web_search. */
+export function supportsWebSearchFilters(model: string): boolean {
+	const m = model.toLowerCase()
+	if (/^gpt-5(\.\d+)*$/.test(m)) return true
+	if (m === 'gpt-4o') return true
+	return false
+}
+
+/** Check if error is due to model access/verification or feature-incompatibility issues. */
+export function isModelAccessError(error: http.HTTPError): boolean {
 	if (error.status_code !== 400) return false
 	if (!error.body) return false
 	const bodyLower = error.body.toLowerCase()
@@ -70,6 +78,8 @@ function isModelAccessError(error: http.HTTPError): boolean {
 		'does not have access',
 		'not available',
 		'not found',
+		'not supported',
+		'unsupported',
 	].some((phrase) => bodyLower.includes(phrase))
 }
 
@@ -138,14 +148,14 @@ export async function searchReddit(
 	let lastError: http.HTTPError | null = null
 
 	for (const currentModel of modelsToTry) {
+		const webSearchTool: Record<string, unknown> = { type: 'web_search' }
+		if (supportsWebSearchFilters(currentModel)) {
+			webSearchTool.filters = { allowed_domains: ['reddit.com'] }
+		}
+
 		const payload = {
 			model: currentModel,
-			tools: [
-				{
-					type: 'web_search',
-					filters: { allowed_domains: ['reddit.com'] },
-				},
-			],
+			tools: [webSearchTool],
 			include: ['web_search_call.action.sources'],
 			input: inputText,
 		}

@@ -12,6 +12,7 @@ import {
 	getNgrams,
 	HTTPError,
 	isExcludedDomain,
+	isModelAccessError,
 	isRetryableRateLimit,
 	jaccardSimilarity,
 	normalizeText,
@@ -24,10 +25,15 @@ import {
 	renderContextSnippet,
 	renderFullReport,
 	scoreRedditItems,
+	supportsWebSearchFilters,
 	timestampToDate,
 } from '../src/index'
 
-import { getSourceCacheKey, SEARCH_CACHE_SCHEMA_VERSION } from '../src/lib/cache'
+import {
+	getEnrichmentCacheKey,
+	getSourceCacheKey,
+	SEARCH_CACHE_SCHEMA_VERSION,
+} from '../src/lib/cache'
 import { reportFromDict, reportToDict } from '../src/lib/schema'
 
 // ---------------------------------------------------------------------------
@@ -688,6 +694,11 @@ describe('cache key versioning', () => {
 	test('schema version constant exists', () => {
 		expect(SEARCH_CACHE_SCHEMA_VERSION).toMatch(/^v\d+$/)
 	})
+
+	test('enrichment key is stable for same URL', () => {
+		const url = 'https://www.reddit.com/r/typescript/comments/abc123/example/'
+		expect(getEnrichmentCacheKey(url)).toBe(getEnrichmentCacheKey(url))
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -790,5 +801,82 @@ describe('cli', () => {
 		}
 		// Mock runs never hit cache, so from_cache should not appear in JSON
 		expect(output.from_cache).toBeUndefined()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// openai-reddit: isModelAccessError
+// ---------------------------------------------------------------------------
+describe('isModelAccessError', () => {
+	test('detects "not supported" as access error', () => {
+		const err = new HTTPError(
+			'bad request',
+			400,
+			'The parameter "filters" is not supported with this model.',
+		)
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('detects "unsupported" as access error', () => {
+		const err = new HTTPError('bad request', 400, 'Unsupported parameter: filters')
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('detects "does not have access" as access error', () => {
+		const err = new HTTPError(
+			'bad request',
+			400,
+			'Your organization does not have access to this model.',
+		)
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('returns false for non-400 status', () => {
+		const err = new HTTPError('server error', 500, 'not supported')
+		expect(isModelAccessError(err)).toBe(false)
+	})
+
+	test('returns false for 400 with unrelated body', () => {
+		const err = new HTTPError('bad request', 400, 'Invalid JSON in request body.')
+		expect(isModelAccessError(err)).toBe(false)
+	})
+
+	test('returns false for 400 with no body', () => {
+		const err = new HTTPError('bad request', 400)
+		expect(isModelAccessError(err)).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// openai-reddit: supportsWebSearchFilters
+// ---------------------------------------------------------------------------
+describe('supportsWebSearchFilters', () => {
+	test('gpt-5 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5')).toBe(true)
+	})
+
+	test('gpt-5.2 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5.2')).toBe(true)
+	})
+
+	test('gpt-5.2.1 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5.2.1')).toBe(true)
+	})
+
+	test('gpt-4o supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o')).toBe(true)
+	})
+
+	test('gpt-4o-mini does NOT support filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o-mini')).toBe(false)
+	})
+
+	test('gpt-4o-2024-08-06 does NOT support filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o-2024-08-06')).toBe(false)
+	})
+
+	test('is case-insensitive', () => {
+		expect(supportsWebSearchFilters('GPT-5.2')).toBe(true)
+		expect(supportsWebSearchFilters('GPT-4o')).toBe(true)
 	})
 })

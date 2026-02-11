@@ -57,6 +57,11 @@ export {
 	normalizeRedditItems,
 	normalizeXItems,
 } from './lib/normalize.js'
+// OpenAI Reddit
+export {
+	isModelAccessError,
+	supportsWebSearchFilters,
+} from './lib/openai-reddit.js'
 // Rendering
 export {
 	renderCompact,
