@@ -153,7 +153,7 @@ function readCache(cachePath: string): Record<string, unknown> | null {
 /** Load data from cache if valid. */
 export function loadCache(
 	cacheKey: string,
-	ttlHours = DEFAULT_TTL_HOURS,
+	ttlHours: number = DEFAULT_TTL_HOURS,
 ): Record<string, unknown> | null {
 	const cachePath = getCachePath(cacheKey)
 	if (!isCacheValid(cachePath, ttlHours)) return null
@@ -175,7 +175,7 @@ function getCacheAgeHours(cachePath: string): number | null {
 /** Load data from cache with age info. Returns [data, ageHours]. */
 export function loadCacheWithAge(
 	cacheKey: string,
-	ttlHours = DEFAULT_TTL_HOURS,
+	ttlHours: number = DEFAULT_TTL_HOURS,
 ): [Record<string, unknown> | null, number | null] {
 	const cachePath = getCachePath(cacheKey)
 	if (!isCacheValid(cachePath, ttlHours)) return [null, null]
@@ -219,7 +219,7 @@ export function saveCache(
 /** Attempt to acquire a per-key cache lock with timeout. */
 export async function acquireCacheLock(
 	cacheKey: string,
-	waitMs = LOCK_WAIT_MS,
+	waitMs: number = LOCK_WAIT_MS,
 ): Promise<boolean> {
 	ensureLockDir()
 	const lockPath = getLockPath(cacheKey)
@@ -257,7 +257,7 @@ export async function acquireCacheLock(
 	}
 }
 
-/** Release a cache lock if held by this process. */
+/** Release a cache lock. No ownership verification is performed. */
 export function releaseCacheLock(cacheKey: string): void {
 	const lockPath = getLockPath(cacheKey)
 	try {

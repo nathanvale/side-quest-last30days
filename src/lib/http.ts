@@ -7,7 +7,7 @@ const MAX_RETRY_DELAY = 30_000
 const MAX_JITTER_MS = 1000
 const USER_AGENT = 'last-30-days-skill/1.0 (Claude Code Skill)'
 
-export const DEBUG =
+export const DEBUG: boolean =
 	process.env.LAST_30_DAYS_DEBUG?.toLowerCase() === '1' ||
 	process.env.LAST_30_DAYS_DEBUG?.toLowerCase() === 'true'
 
@@ -117,7 +117,7 @@ export function backoffDelay(attempt: number): number {
 /** Parse Retry-After header (seconds or HTTP date) to milliseconds. */
 export function parseRetryAfterMs(
 	retryAfterValue: string | null,
-	nowMs = Date.now(),
+	nowMs: number = Date.now(),
 ): number | null {
 	if (!retryAfterValue) return null
 	const v = retryAfterValue.trim()
@@ -146,7 +146,7 @@ export function parseRateLimitResetMs(value: string | null): number | null {
 		return Math.round(Number(v) * 1000)
 	}
 
-	const match = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?(?:(\d+)ms)?$/i)
+	const match = v.match(/^(?:(\d+)h)?(?:(\d+)m(?!s))?(?:(\d+)s)?(?:(\d+)ms)?$/i)
 	if (!match) return null
 
 	const [, hours, mins, secs, millis] = match
