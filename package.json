@@ -73,7 +73,6 @@
 		"release": "changeset publish --provenance",
 		"release:snapshot:canary": "changeset version --snapshot canary && changeset publish --tag canary",
 		"security:audit": "npm audit",
-		"smoke:rate-limit": "bash scripts/smoke-rate-limit.sh",
 		"test": "bun test --recursive",
 		"test:ci": "TF_BUILD=true bun test --recursive",
 		"test:coverage": "bun test --coverage",

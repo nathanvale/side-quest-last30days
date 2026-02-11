@@ -609,8 +609,10 @@ async function main() {
 	let xError: string | null = null
 	let anyFromCache = false
 	let maxCacheAge: number | null = null
-	let anyRateLimited = false
-	let anyUsedStaleCache = false
+	let redditRateLimited = false
+	let xRateLimited = false
+	let redditUsedStaleCache = false
+	let xUsedStaleCache = false
 
 	const promises: Promise<void>[] = []
 
@@ -640,8 +642,8 @@ async function main() {
 						maxCacheAge = result.cacheAgeHours
 					}
 				}
-				if (result.rateLimited) anyRateLimited = true
-				if (result.usedStaleCache) anyUsedStaleCache = true
+				if (result.rateLimited) redditRateLimited = true
+				if (result.usedStaleCache) redditUsedStaleCache = true
 				if (result.fromCache && !result.rateLimited) {
 					progress.endReddit(redditItems.length)
 				} else {
@@ -678,8 +680,8 @@ async function main() {
 						maxCacheAge = result.cacheAgeHours
 					}
 				}
-				if (result.rateLimited) anyRateLimited = true
-				if (result.usedStaleCache) anyUsedStaleCache = true
+				if (result.rateLimited) xRateLimited = true
+				if (result.usedStaleCache) xUsedStaleCache = true
 				if (result.fromCache && !result.rateLimited) {
 					progress.endX(xItems.length)
 				} else {
@@ -692,12 +694,17 @@ async function main() {
 
 	await Promise.allSettled(promises)
 
+	const anyRateLimited = redditRateLimited || xRateLimited
+	const anyUsedStaleCache = redditUsedStaleCache || xUsedStaleCache
+
 	if (anyFromCache && !anyRateLimited) {
 		progress.showCached(maxCacheAge)
 	}
 	if (anyRateLimited) {
-		const sourceName =
-			runReddit && runX ? 'Reddit/X' : runReddit ? 'Reddit' : 'X'
+		const rateLimitedSources: string[] = []
+		if (redditRateLimited) rateLimitedSources.push('Reddit')
+		if (xRateLimited) rateLimitedSources.push('X')
+		const sourceName = rateLimitedSources.join('/')
 		progress.showRateLimited(sourceName, anyUsedStaleCache, maxCacheAge)
 	}
 

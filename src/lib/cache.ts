@@ -28,7 +28,7 @@ const ENRICH_TTL_HOURS = 24
 
 const LOCK_WAIT_MS = 5_000
 const LOCK_POLL_MS = 100
-const LOCK_STALE_MS = 60_000
+const LOCK_STALE_MS = 300_000
 
 /** Bump when cache record format semantics change. */
 export const SEARCH_CACHE_SCHEMA_VERSION = 'v2'
