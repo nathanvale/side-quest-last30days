@@ -27,6 +27,7 @@ import {
 	timestampToDate,
 } from '../src/index'
 
+import { getSourceCacheKey, SEARCH_CACHE_SCHEMA_VERSION } from '../src/lib/cache'
 import { reportFromDict, reportToDict } from '../src/lib/schema'
 
 // ---------------------------------------------------------------------------
@@ -491,6 +492,205 @@ describe('RateLimitError', () => {
 })
 
 // ---------------------------------------------------------------------------
+// cache: versioned keys
+// ---------------------------------------------------------------------------
+describe('cache key versioning', () => {
+	const base = {
+		topic: 'Claude Code',
+		fromDate: '2026-01-13',
+		toDate: '2026-02-12',
+		days: 30,
+		source: 'reddit' as const,
+		depth: 'default',
+		model: 'gpt-4o',
+		promptVersion: '2026-02-11-v1',
+	}
+
+	test('same inputs produce identical keys', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).toBe(key2)
+	})
+
+	test('different topic produces different key', () => {
+		const key1 = getSourceCacheKey(
+			'Claude Code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			'React',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different depth produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			'quick',
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			'deep',
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different source produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			'reddit',
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			'x',
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different model produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			'gpt-4o',
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			'gpt-4o-mini',
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different prompt version produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			'2026-02-11-v1',
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			'2026-02-12-v2',
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('topic normalization: case and whitespace are ignored', () => {
+		const key1 = getSourceCacheKey(
+			'Claude Code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			'claude code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key3 = getSourceCacheKey(
+			'  Claude   Code  ',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).toBe(key2)
+		expect(key1).toBe(key3)
+	})
+
+	test('schema version constant exists', () => {
+		expect(SEARCH_CACHE_SCHEMA_VERSION).toMatch(/^v\d+$/)
+	})
+})
+
+// ---------------------------------------------------------------------------
 // cli
 // ---------------------------------------------------------------------------
 describe('cli', () => {
@@ -562,5 +762,33 @@ describe('cli', () => {
 		expect(new TextDecoder().decode(result.stderr)).toContain(
 			'--days must be an integer between 1 and 365',
 		)
+	})
+
+	test('--refresh flag is accepted', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--refresh'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(30)
+	})
+
+	test('--no-cache flag is accepted', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--no-cache'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(30)
+	})
+
+	test('mock output does not include from_cache when false', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			from_cache?: boolean
+		}
+		// Mock runs never hit cache, so from_cache should not appear in JSON
+		expect(output.from_cache).toBeUndefined()
 	})
 })

@@ -5,6 +5,22 @@
  * Engagement-ranked results with scoring and deduplication.
  */
 
+// Cache
+export {
+	acquireCacheLock,
+	getCacheKey,
+	getEnrichmentCacheKey,
+	getEnrichmentTTL,
+	getSearchTTL,
+	getSourceCacheKey,
+	getStaleSearchTTL,
+	loadCache,
+	loadCacheWithAge,
+	loadStaleCacheWithAge,
+	releaseCacheLock,
+	SEARCH_CACHE_SCHEMA_VERSION,
+	saveCache,
+} from './lib/cache.js'
 // Config
 export { getAvailableSources, getConfig, getMissingKeys } from './lib/config.js'
 // Date utilities
