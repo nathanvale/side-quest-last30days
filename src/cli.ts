@@ -14,14 +14,18 @@
  *   --deep           Comprehensive research with more sources
  *   --debug          Enable verbose debug logging
  *   --include-web    Include general web search alongside Reddit/X
+ *   --refresh        Bypass cache reads and force fresh search
+ *   --no-cache       Disable cache reads and writes
  */
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as cache from './lib/cache.js'
 import * as config from './lib/config.js'
 import { getDateRange } from './lib/dates.js'
 import * as dedupe from './lib/dedupe.js'
+import { RateLimitError } from './lib/http.js'
 import * as models from './lib/models.js'
 import * as normalize from './lib/normalize.js'
 import * as openaiReddit from './lib/openai-reddit.js'
@@ -69,6 +73,8 @@ Options:
   --quick          Faster research with fewer results
   --deep           Comprehensive research with more results
   --include-web    Include general web search alongside Reddit/X
+  --refresh        Bypass cache reads and force fresh search
+  --no-cache       Disable cache reads and writes
   --mock           Use fixture data instead of real API calls
   --debug          Enable verbose debug logging
   -h, --help       Show this help message
@@ -104,6 +110,8 @@ function parseArgs(args: string[]) {
 	let deep = false
 	let debug = false
 	let includeWeb = false
+	let refresh = false
+	let noCache = false
 	let days = 30
 
 	for (let i = 0; i < args.length; i++) {
@@ -134,12 +142,59 @@ function parseArgs(args: string[]) {
 			debug = true
 		} else if (arg === '--include-web') {
 			includeWeb = true
+		} else if (arg === '--refresh') {
+			refresh = true
+		} else if (arg === '--no-cache') {
+			noCache = true
 		} else if (!arg.startsWith('-')) {
 			topic = topic ? `${topic} ${arg}` : arg
 		}
 	}
 
-	return { topic, mock, emit, sources, quick, deep, debug, includeWeb, days }
+	return {
+		topic,
+		mock,
+		emit,
+		sources,
+		quick,
+		deep,
+		debug,
+		includeWeb,
+		refresh,
+		noCache,
+		days,
+	}
+}
+
+interface SearchTaskResult {
+	items: Record<string, unknown>[]
+	raw: Record<string, unknown> | null
+	error: string | null
+	fromCache: boolean
+	cacheAgeHours: number | null
+	rateLimited: boolean
+	usedStaleCache: boolean
+}
+
+interface CachedSearchPayload {
+	items: Record<string, unknown>[]
+	raw: Record<string, unknown> | null
+}
+
+function parseCachedSearchPayload(
+	data: Record<string, unknown> | null,
+): CachedSearchPayload | null {
+	if (!data) return null
+	const itemsRaw = data.items
+	if (!Array.isArray(itemsRaw)) return null
+	const items = itemsRaw.filter(
+		(item) => item && typeof item === 'object',
+	) as Record<string, unknown>[]
+	const rawData =
+		data.raw && typeof data.raw === 'object'
+			? (data.raw as Record<string, unknown>)
+			: null
+	return { items, raw: rawData }
 }
 
 async function searchRedditTask(
@@ -148,20 +203,73 @@ async function searchRedditTask(
 	selectedModels: Record<string, string | null>,
 	fromDate: string,
 	toDate: string,
+	days: number,
 	depth: string,
 	mock: boolean,
-): Promise<{
-	items: Record<string, unknown>[]
-	raw: Record<string, unknown> | null
-	error: string | null
-}> {
+	cacheOpts: { skipRead: boolean; skipWrite: boolean },
+): Promise<SearchTaskResult> {
+	const cacheKey = cache.getSourceCacheKey(
+		topic,
+		fromDate,
+		toDate,
+		days,
+		'reddit',
+		depth,
+		selectedModels.openai ?? null,
+		openaiReddit.REDDIT_PROMPT_VERSION,
+	)
+
+	// Try cache first (unless refreshing or mock)
+	if (!mock && !cacheOpts.skipRead) {
+		const [cached, ageHours] = cache.loadCacheWithAge(
+			cacheKey,
+			cache.getSearchTTL(),
+		)
+		const payload = parseCachedSearchPayload(cached)
+		if (payload) {
+			return {
+				items: payload.items,
+				raw: payload.raw,
+				error: null,
+				fromCache: true,
+				cacheAgeHours: ageHours,
+				rateLimited: false,
+				usedStaleCache: false,
+			}
+		}
+	}
+
+	let lockAcquired = false
+	if (!mock && !cacheOpts.skipRead) {
+		lockAcquired = await cache.acquireCacheLock(cacheKey)
+		if (!lockAcquired) {
+			const [cachedAfterWait, ageHours] = cache.loadCacheWithAge(
+				cacheKey,
+				cache.getSearchTTL(),
+			)
+			const payload = parseCachedSearchPayload(cachedAfterWait)
+			if (payload) {
+				return {
+					items: payload.items,
+					raw: payload.raw,
+					error: null,
+					fromCache: true,
+					cacheAgeHours: ageHours,
+					rateLimited: false,
+					usedStaleCache: false,
+				}
+			}
+		}
+	}
+
 	let raw: Record<string, unknown> | null = null
 	let error: string | null = null
+	let rateLimited = false
 
-	if (mock) {
-		raw = loadFixture('openai_sample.json')
-	} else {
-		try {
+	try {
+		if (mock) {
+			raw = loadFixture('openai_sample.json')
+		} else {
 			raw = await openaiReddit.searchReddit(
 				cfg.OPENAI_API_KEY!,
 				selectedModels.openai!,
@@ -170,16 +278,44 @@ async function searchRedditTask(
 				toDate,
 				depth,
 			)
-		} catch (e) {
-			raw = { error: String(e) }
+		}
+	} catch (e) {
+		raw = { error: String(e) }
+		if (e instanceof RateLimitError) {
+			rateLimited = true
+			error = e.retryable
+				? `Rate limited after ${e.retries_attempted} retries`
+				: 'OpenAI quota/billing limit reached (non-retryable 429)'
+
+			// Stale cache fallback on transient rate-limit only.
+			// Keep error null when stale cache is served so results still render.
+			if (e.retryable && !cacheOpts.skipRead) {
+				const [stale, staleAge] = cache.loadStaleCacheWithAge(cacheKey)
+				const payload = parseCachedSearchPayload(stale)
+				if (payload) {
+					return {
+						items: payload.items,
+						raw: payload.raw,
+						error: null,
+						fromCache: true,
+						cacheAgeHours: staleAge,
+						rateLimited: true,
+						usedStaleCache: true,
+					}
+				}
+			}
+		} else {
 			error = `API error: ${e}`
 		}
+	} finally {
+		if (lockAcquired) cache.releaseCacheLock(cacheKey)
 	}
 
 	const items = openaiReddit.parseRedditResponse(raw ?? {})
 
 	// Quick retry with simpler query if few results
-	if (items.length < 5 && !mock && !error) {
+	// Skip if the first attempt was rate-limited (retry amplification guard)
+	if (items.length < 5 && !mock && !error && !rateLimited) {
 		const core = openaiReddit.extractCoreSubject(topic)
 		if (core.toLowerCase() !== topic.toLowerCase()) {
 			try {
@@ -202,7 +338,20 @@ async function searchRedditTask(
 		}
 	}
 
-	return { items, raw, error }
+	// Write through to cache on success (unless disabled)
+	if (!mock && !cacheOpts.skipWrite && !error && items.length > 0) {
+		cache.saveCache(cacheKey, { items, raw })
+	}
+
+	return {
+		items,
+		raw,
+		error,
+		fromCache: false,
+		cacheAgeHours: null,
+		rateLimited,
+		usedStaleCache: false,
+	}
 }
 
 async function searchXTask(
@@ -211,20 +360,73 @@ async function searchXTask(
 	selectedModels: Record<string, string | null>,
 	fromDate: string,
 	toDate: string,
+	days: number,
 	depth: string,
 	mock: boolean,
-): Promise<{
-	items: Record<string, unknown>[]
-	raw: Record<string, unknown> | null
-	error: string | null
-}> {
+	cacheOpts: { skipRead: boolean; skipWrite: boolean },
+): Promise<SearchTaskResult> {
+	const cacheKey = cache.getSourceCacheKey(
+		topic,
+		fromDate,
+		toDate,
+		days,
+		'x',
+		depth,
+		selectedModels.xai ?? null,
+		xaiX.X_PROMPT_VERSION,
+	)
+
+	// Try cache first (unless refreshing or mock)
+	if (!mock && !cacheOpts.skipRead) {
+		const [cached, ageHours] = cache.loadCacheWithAge(
+			cacheKey,
+			cache.getSearchTTL(),
+		)
+		const payload = parseCachedSearchPayload(cached)
+		if (payload) {
+			return {
+				items: payload.items,
+				raw: payload.raw,
+				error: null,
+				fromCache: true,
+				cacheAgeHours: ageHours,
+				rateLimited: false,
+				usedStaleCache: false,
+			}
+		}
+	}
+
+	let lockAcquired = false
+	if (!mock && !cacheOpts.skipRead) {
+		lockAcquired = await cache.acquireCacheLock(cacheKey)
+		if (!lockAcquired) {
+			const [cachedAfterWait, ageHours] = cache.loadCacheWithAge(
+				cacheKey,
+				cache.getSearchTTL(),
+			)
+			const payload = parseCachedSearchPayload(cachedAfterWait)
+			if (payload) {
+				return {
+					items: payload.items,
+					raw: payload.raw,
+					error: null,
+					fromCache: true,
+					cacheAgeHours: ageHours,
+					rateLimited: false,
+					usedStaleCache: false,
+				}
+			}
+		}
+	}
+
 	let raw: Record<string, unknown> | null = null
 	let error: string | null = null
+	let rateLimited = false
 
-	if (mock) {
-		raw = loadFixture('xai_sample.json')
-	} else {
-		try {
+	try {
+		if (mock) {
+			raw = loadFixture('xai_sample.json')
+		} else {
 			raw = await xaiX.searchX(
 				cfg.XAI_API_KEY!,
 				selectedModels.xai!,
@@ -233,14 +435,55 @@ async function searchXTask(
 				toDate,
 				depth,
 			)
-		} catch (e) {
-			raw = { error: String(e) }
+		}
+	} catch (e) {
+		raw = { error: String(e) }
+		if (e instanceof RateLimitError) {
+			rateLimited = true
+			error = e.retryable
+				? `Rate limited after ${e.retries_attempted} retries`
+				: 'xAI quota/billing limit reached (non-retryable 429)'
+
+			// Stale cache fallback on transient rate-limit only.
+			// Keep error null when stale cache is served so results still render.
+			if (e.retryable && !cacheOpts.skipRead) {
+				const [stale, staleAge] = cache.loadStaleCacheWithAge(cacheKey)
+				const payload = parseCachedSearchPayload(stale)
+				if (payload) {
+					return {
+						items: payload.items,
+						raw: payload.raw,
+						error: null,
+						fromCache: true,
+						cacheAgeHours: staleAge,
+						rateLimited: true,
+						usedStaleCache: true,
+					}
+				}
+			}
+		} else {
 			error = `API error: ${e}`
 		}
+	} finally {
+		if (lockAcquired) cache.releaseCacheLock(cacheKey)
 	}
 
 	const items = xaiX.parseXResponse(raw ?? {})
-	return { items, raw, error }
+
+	// Write through to cache on success (unless disabled)
+	if (!mock && !cacheOpts.skipWrite && !error && items.length > 0) {
+		cache.saveCache(cacheKey, { items, raw })
+	}
+
+	return {
+		items,
+		raw,
+		error,
+		fromCache: false,
+		cacheAgeHours: null,
+		rateLimited,
+		usedStaleCache: false,
+	}
 }
 
 async function main() {
@@ -352,6 +595,11 @@ async function main() {
 	const runReddit = ['both', 'reddit', 'all', 'reddit-web'].includes(sources)
 	const runX = ['both', 'x', 'all', 'x-web'].includes(sources)
 
+	// Cache configuration
+	const skipCacheRead = args.refresh || args.noCache
+	const skipCacheWrite = args.noCache
+	const cacheOpts = { skipRead: skipCacheRead, skipWrite: skipCacheWrite }
+
 	// Run searches in parallel
 	let redditItems: Record<string, unknown>[] = []
 	let xItems: Record<string, unknown>[] = []
@@ -359,6 +607,12 @@ async function main() {
 	let rawXai: Record<string, unknown> | null = null
 	let redditError: string | null = null
 	let xError: string | null = null
+	let anyFromCache = false
+	let maxCacheAge: number | null = null
+	let redditRateLimited = false
+	let xRateLimited = false
+	let redditUsedStaleCache = false
+	let xUsedStaleCache = false
 
 	const promises: Promise<void>[] = []
 
@@ -371,14 +625,31 @@ async function main() {
 				selectedModels,
 				fromDate,
 				toDate,
+				args.days,
 				depth,
 				args.mock,
+				cacheOpts,
 			).then((result) => {
 				redditItems = result.items
 				rawOpenai = result.raw
 				redditError = result.error
-				if (redditError) progress.showError(`Reddit error: ${redditError}`)
-				progress.endReddit(redditItems.length)
+				if (result.fromCache) {
+					anyFromCache = true
+					if (
+						result.cacheAgeHours != null &&
+						(maxCacheAge == null || result.cacheAgeHours > maxCacheAge)
+					) {
+						maxCacheAge = result.cacheAgeHours
+					}
+				}
+				if (result.rateLimited) redditRateLimited = true
+				if (result.usedStaleCache) redditUsedStaleCache = true
+				if (result.fromCache && !result.rateLimited) {
+					progress.endReddit(redditItems.length)
+				} else {
+					if (redditError) progress.showError(`Reddit error: ${redditError}`)
+					progress.endReddit(redditItems.length)
+				}
 			}),
 		)
 	}
@@ -392,19 +663,50 @@ async function main() {
 				selectedModels,
 				fromDate,
 				toDate,
+				args.days,
 				depth,
 				args.mock,
+				cacheOpts,
 			).then((result) => {
 				xItems = result.items
 				rawXai = result.raw
 				xError = result.error
-				if (xError) progress.showError(`X error: ${xError}`)
-				progress.endX(xItems.length)
+				if (result.fromCache) {
+					anyFromCache = true
+					if (
+						result.cacheAgeHours != null &&
+						(maxCacheAge == null || result.cacheAgeHours > maxCacheAge)
+					) {
+						maxCacheAge = result.cacheAgeHours
+					}
+				}
+				if (result.rateLimited) xRateLimited = true
+				if (result.usedStaleCache) xUsedStaleCache = true
+				if (result.fromCache && !result.rateLimited) {
+					progress.endX(xItems.length)
+				} else {
+					if (xError) progress.showError(`X error: ${xError}`)
+					progress.endX(xItems.length)
+				}
 			}),
 		)
 	}
 
 	await Promise.allSettled(promises)
+
+	const anyRateLimited = redditRateLimited || xRateLimited
+	const anyUsedStaleCache = redditUsedStaleCache || xUsedStaleCache
+
+	if (anyFromCache && !anyRateLimited) {
+		progress.showCached(maxCacheAge)
+	}
+	if (anyRateLimited) {
+		const rateLimitedSources: string[] = []
+		if (redditRateLimited) rateLimitedSources.push('Reddit')
+		if (xRateLimited) rateLimitedSources.push('X')
+		const sourceName = rateLimitedSources.join('/')
+		progress.showRateLimited(sourceName, anyUsedStaleCache, maxCacheAge)
+	}
 
 	// Enrich Reddit items
 	const rawRedditEnriched: Record<string, unknown>[] = []
@@ -412,6 +714,28 @@ async function main() {
 		progress.startRedditEnrich(1, redditItems.length)
 		for (let i = 0; i < redditItems.length; i++) {
 			if (i > 0) progress.updateRedditEnrich(i + 1, redditItems.length)
+			const item = redditItems[i]!
+			const itemUrl = String(item.url ?? '')
+			const enrichKey = itemUrl ? cache.getEnrichmentCacheKey(itemUrl) : ''
+
+			if (!args.mock && enrichKey && !skipCacheRead) {
+				const [cachedEnriched] = cache.loadCacheWithAge(
+					enrichKey,
+					cache.getEnrichmentTTL(),
+				)
+				const cachedItem =
+					cachedEnriched &&
+					typeof cachedEnriched.item === 'object' &&
+					cachedEnriched.item
+						? (cachedEnriched.item as Record<string, unknown>)
+						: null
+				if (cachedItem) {
+					redditItems[i] = cachedItem
+					rawRedditEnriched.push(cachedItem)
+					continue
+				}
+			}
+
 			try {
 				if (args.mock) {
 					const mockThread = loadFixture('reddit_thread_sample.json')
@@ -421,6 +745,12 @@ async function main() {
 					)
 				} else {
 					redditItems[i] = await redditEnrich.enrichRedditItem(redditItems[i]!)
+					if (enrichKey && !skipCacheWrite) {
+						cache.saveCache(enrichKey, {
+							item: redditItems[i]!,
+							cached_at: new Date().toISOString(),
+						})
+					}
 				}
 			} catch (e) {
 				progress.showError(`Enrich failed: ${e}`)
@@ -472,6 +802,8 @@ async function main() {
 	report.x = dedupedX
 	report.reddit_error = redditError
 	report.x_error = xError
+	report.from_cache = anyFromCache
+	report.cache_age_hours = maxCacheAge
 	report.context_snippet_md = render.renderContextSnippet(report)
 
 	// Write outputs

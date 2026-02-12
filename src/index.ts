@@ -5,6 +5,22 @@
  * Engagement-ranked results with scoring and deduplication.
  */
 
+// Cache
+export {
+	acquireCacheLock,
+	getCacheKey,
+	getEnrichmentCacheKey,
+	getEnrichmentTTL,
+	getSearchTTL,
+	getSourceCacheKey,
+	getStaleSearchTTL,
+	loadCache,
+	loadCacheWithAge,
+	loadStaleCacheWithAge,
+	releaseCacheLock,
+	SEARCH_CACHE_SCHEMA_VERSION,
+	saveCache,
+} from './lib/cache.js'
 // Config
 export { getAvailableSources, getConfig, getMissingKeys } from './lib/config.js'
 // Date utilities
@@ -26,12 +42,26 @@ export {
 	jaccardSimilarity,
 	normalizeText,
 } from './lib/dedupe.js'
+// HTTP / retry
+export {
+	backoffDelay,
+	HTTPError,
+	isRetryableRateLimit,
+	parseRateLimitResetMs,
+	parseRetryAfterMs,
+	RateLimitError,
+} from './lib/http.js'
 // Normalization
 export {
 	filterByDateRange,
 	normalizeRedditItems,
 	normalizeXItems,
 } from './lib/normalize.js'
+// OpenAI Reddit
+export {
+	isModelAccessError,
+	supportsWebSearchFilters,
+} from './lib/openai-reddit.js'
 // Rendering
 export {
 	renderCompact,

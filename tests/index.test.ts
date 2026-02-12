@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+	backoffDelay,
 	createReport,
 	daysAgo,
 	extractDateFromSnippet,
@@ -9,18 +10,30 @@ import {
 	getDateConfidence,
 	getDateRange,
 	getNgrams,
+	HTTPError,
 	isExcludedDomain,
+	isModelAccessError,
+	isRetryableRateLimit,
 	jaccardSimilarity,
 	normalizeText,
 	parseDate,
+	parseRateLimitResetMs,
+	parseRetryAfterMs,
+	RateLimitError,
 	recencyScore,
 	renderCompact,
 	renderContextSnippet,
 	renderFullReport,
 	scoreRedditItems,
+	supportsWebSearchFilters,
 	timestampToDate,
 } from '../src/index'
 
+import {
+	getEnrichmentCacheKey,
+	getSourceCacheKey,
+	SEARCH_CACHE_SCHEMA_VERSION,
+} from '../src/lib/cache'
 import { reportFromDict, reportToDict } from '../src/lib/schema'
 
 // ---------------------------------------------------------------------------
@@ -285,6 +298,410 @@ describe('render', () => {
 })
 
 // ---------------------------------------------------------------------------
+// http: 429 classification
+// ---------------------------------------------------------------------------
+describe('429 classification', () => {
+	test('transient rate-limit body is retryable', () => {
+		const body = JSON.stringify({
+			error: { type: 'rate_limit_exceeded', message: 'Rate limit reached' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(true)
+	})
+
+	test('insufficient_quota code is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { code: 'insufficient_quota', message: 'You exceeded your quota' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('billing_hard_limit_reached is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { code: 'billing_hard_limit_reached', message: 'Billing limit' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('quota exceeded in message is non-retryable', () => {
+		const body = JSON.stringify({
+			error: { type: 'error', message: 'Quota exceeded for this org' },
+		})
+		expect(isRetryableRateLimit(body)).toBe(false)
+	})
+
+	test('null body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit(null)).toBe(true)
+	})
+
+	test('empty body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit('')).toBe(true)
+	})
+
+	test('malformed JSON body is retryable (assume transient)', () => {
+		expect(isRetryableRateLimit('not json')).toBe(true)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: backoff
+// ---------------------------------------------------------------------------
+describe('backoff', () => {
+	test('backoffDelay is bounded by MAX_RETRY_DELAY (30s)', () => {
+		for (let i = 0; i < 10; i++) {
+			expect(backoffDelay(i)).toBeLessThanOrEqual(30_000)
+		}
+	})
+
+	test('backoffDelay is generally increasing for early attempts', () => {
+		// Run multiple times to account for jitter
+		const results: number[][] = []
+		for (let run = 0; run < 10; run++) {
+			results.push([0, 1, 2, 3, 4].map((a) => backoffDelay(a)))
+		}
+		// Average across runs to smooth jitter
+		const avgs = [0, 1, 2, 3, 4].map(
+			(i) => results.reduce((sum, r) => sum + r[i]!, 0) / results.length,
+		)
+		expect(avgs[1]!).toBeGreaterThan(avgs[0]!)
+		expect(avgs[2]!).toBeGreaterThan(avgs[1]!)
+		expect(avgs[3]!).toBeGreaterThan(avgs[2]!)
+	})
+
+	test('backoffDelay attempt 0 is at least 1000ms', () => {
+		// base = 1000 * 2^0 = 1000, plus jitter [0, 1000)
+		expect(backoffDelay(0)).toBeGreaterThanOrEqual(1000)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: header parsing
+// ---------------------------------------------------------------------------
+describe('parseRetryAfterMs', () => {
+	test('parses integer seconds', () => {
+		expect(parseRetryAfterMs('5')).toBe(5000)
+	})
+
+	test('parses decimal seconds', () => {
+		expect(parseRetryAfterMs('1.5')).toBe(1500)
+	})
+
+	test('parses zero seconds', () => {
+		expect(parseRetryAfterMs('0')).toBe(0)
+	})
+
+	test('returns null for null input', () => {
+		expect(parseRetryAfterMs(null)).toBeNull()
+	})
+
+	test('returns null for empty string', () => {
+		expect(parseRetryAfterMs('')).toBeNull()
+	})
+
+	test('parses HTTP date format', () => {
+		const futureDate = new Date(Date.now() + 10_000).toUTCString()
+		const result = parseRetryAfterMs(futureDate)
+		expect(result).toBeGreaterThan(0)
+		expect(result!).toBeLessThan(15_000)
+	})
+})
+
+describe('parseRateLimitResetMs', () => {
+	test('parses "1s" to 1000ms', () => {
+		expect(parseRateLimitResetMs('1s')).toBe(1000)
+	})
+
+	test('parses "6m0s" to 360000ms', () => {
+		expect(parseRateLimitResetMs('6m0s')).toBe(360_000)
+	})
+
+	test('parses "1m30s" to 90000ms', () => {
+		expect(parseRateLimitResetMs('1m30s')).toBe(90_000)
+	})
+
+	test('parses "250ms" to 250ms', () => {
+		expect(parseRateLimitResetMs('250ms')).toBe(250)
+	})
+
+	test('parses "1h2m3s" to 3723000ms', () => {
+		expect(parseRateLimitResetMs('1h2m3s')).toBe(3_723_000)
+	})
+
+	test('parses bare numeric as seconds', () => {
+		expect(parseRateLimitResetMs('5')).toBe(5000)
+	})
+
+	test('returns null for sentinel "0"', () => {
+		expect(parseRateLimitResetMs('0')).toBeNull()
+	})
+
+	test('returns null for sentinel "-1"', () => {
+		expect(parseRateLimitResetMs('-1')).toBeNull()
+	})
+
+	test('returns null for null', () => {
+		expect(parseRateLimitResetMs(null)).toBeNull()
+	})
+
+	test('returns null for empty string', () => {
+		expect(parseRateLimitResetMs('')).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// http: RateLimitError shape
+// ---------------------------------------------------------------------------
+describe('RateLimitError', () => {
+	test('extends HTTPError with correct fields', () => {
+		const err = new RateLimitError('rate limited', {
+			body: '{"error":{}}',
+			retriesAttempted: 3,
+			retryable: true,
+			retryAfterMs: 5000,
+			ratelimitResetMs: 10_000,
+			method: 'POST',
+			url: 'https://api.openai.com/v1/responses',
+			requestId: 'req_123',
+		})
+		expect(err).toBeInstanceOf(HTTPError)
+		expect(err).toBeInstanceOf(RateLimitError)
+		expect(err.name).toBe('RateLimitError')
+		expect(err.status_code).toBe(429)
+		expect(err.retries_attempted).toBe(3)
+		expect(err.retryable).toBe(true)
+		expect(err.retry_after_ms).toBe(5000)
+		expect(err.ratelimit_reset_ms).toBe(10_000)
+		expect(err.method).toBe('POST')
+		expect(err.url).toBe('https://api.openai.com/v1/responses')
+		expect(err.request_id).toBe('req_123')
+	})
+
+	test('non-retryable RateLimitError has retryable=false', () => {
+		const err = new RateLimitError('quota exceeded', {
+			retriesAttempted: 1,
+			retryable: false,
+			errorCode: 'insufficient_quota',
+		})
+		expect(err.retryable).toBe(false)
+		expect(err.error_code).toBe('insufficient_quota')
+	})
+
+	test('defaults optional fields to null', () => {
+		const err = new RateLimitError('limited', {
+			retriesAttempted: 1,
+			retryable: true,
+		})
+		expect(err.retry_after_ms).toBeNull()
+		expect(err.ratelimit_reset_ms).toBeNull()
+		expect(err.body).toBeNull()
+		expect(err.request_id).toBeNull()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// cache: versioned keys
+// ---------------------------------------------------------------------------
+describe('cache key versioning', () => {
+	const base = {
+		topic: 'Claude Code',
+		fromDate: '2026-01-13',
+		toDate: '2026-02-12',
+		days: 30,
+		source: 'reddit' as const,
+		depth: 'default',
+		model: 'gpt-4o',
+		promptVersion: '2026-02-11-v1',
+	}
+
+	test('same inputs produce identical keys', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).toBe(key2)
+	})
+
+	test('different topic produces different key', () => {
+		const key1 = getSourceCacheKey(
+			'Claude Code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			'React',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different depth produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			'quick',
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			'deep',
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different source produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			'reddit',
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			'x',
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different model produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			'gpt-4o',
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			'gpt-4o-mini',
+			base.promptVersion,
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('different prompt version produces different key', () => {
+		const key1 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			'2026-02-11-v1',
+		)
+		const key2 = getSourceCacheKey(
+			base.topic,
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			'2026-02-12-v2',
+		)
+		expect(key1).not.toBe(key2)
+	})
+
+	test('topic normalization: case and whitespace are ignored', () => {
+		const key1 = getSourceCacheKey(
+			'Claude Code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key2 = getSourceCacheKey(
+			'claude code',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		const key3 = getSourceCacheKey(
+			'  Claude   Code  ',
+			base.fromDate,
+			base.toDate,
+			base.days,
+			base.source,
+			base.depth,
+			base.model,
+			base.promptVersion,
+		)
+		expect(key1).toBe(key2)
+		expect(key1).toBe(key3)
+	})
+
+	test('schema version constant exists', () => {
+		expect(SEARCH_CACHE_SCHEMA_VERSION).toMatch(/^v\d+$/)
+	})
+
+	test('enrichment key is stable for same URL', () => {
+		const url = 'https://www.reddit.com/r/typescript/comments/abc123/example/'
+		expect(getEnrichmentCacheKey(url)).toBe(getEnrichmentCacheKey(url))
+	})
+})
+
+// ---------------------------------------------------------------------------
 // cli
 // ---------------------------------------------------------------------------
 describe('cli', () => {
@@ -356,5 +773,110 @@ describe('cli', () => {
 		expect(new TextDecoder().decode(result.stderr)).toContain(
 			'--days must be an integer between 1 and 365',
 		)
+	})
+
+	test('--refresh flag is accepted', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--refresh'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(30)
+	})
+
+	test('--no-cache flag is accepted', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--no-cache'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			days: number
+		}
+		expect(output.days).toBe(30)
+	})
+
+	test('mock output does not include from_cache when false', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json'])
+		expect(result.exitCode).toBe(0)
+		const output = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+			from_cache?: boolean
+		}
+		// Mock runs never hit cache, so from_cache should not appear in JSON
+		expect(output.from_cache).toBeUndefined()
+	})
+})
+
+// ---------------------------------------------------------------------------
+// openai-reddit: isModelAccessError
+// ---------------------------------------------------------------------------
+describe('isModelAccessError', () => {
+	test('detects "not supported" as access error', () => {
+		const err = new HTTPError(
+			'bad request',
+			400,
+			'The parameter "filters" is not supported with this model.',
+		)
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('detects "unsupported" as access error', () => {
+		const err = new HTTPError('bad request', 400, 'Unsupported parameter: filters')
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('detects "does not have access" as access error', () => {
+		const err = new HTTPError(
+			'bad request',
+			400,
+			'Your organization does not have access to this model.',
+		)
+		expect(isModelAccessError(err)).toBe(true)
+	})
+
+	test('returns false for non-400 status', () => {
+		const err = new HTTPError('server error', 500, 'not supported')
+		expect(isModelAccessError(err)).toBe(false)
+	})
+
+	test('returns false for 400 with unrelated body', () => {
+		const err = new HTTPError('bad request', 400, 'Invalid JSON in request body.')
+		expect(isModelAccessError(err)).toBe(false)
+	})
+
+	test('returns false for 400 with no body', () => {
+		const err = new HTTPError('bad request', 400)
+		expect(isModelAccessError(err)).toBe(false)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// openai-reddit: supportsWebSearchFilters
+// ---------------------------------------------------------------------------
+describe('supportsWebSearchFilters', () => {
+	test('gpt-5 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5')).toBe(true)
+	})
+
+	test('gpt-5.2 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5.2')).toBe(true)
+	})
+
+	test('gpt-5.2.1 supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-5.2.1')).toBe(true)
+	})
+
+	test('gpt-4o supports filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o')).toBe(true)
+	})
+
+	test('gpt-4o-mini does NOT support filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o-mini')).toBe(false)
+	})
+
+	test('gpt-4o-2024-08-06 does NOT support filters', () => {
+		expect(supportsWebSearchFilters('gpt-4o-2024-08-06')).toBe(false)
+	})
+
+	test('is case-insensitive', () => {
+		expect(supportsWebSearchFilters('GPT-5.2')).toBe(true)
+		expect(supportsWebSearchFilters('GPT-4o')).toBe(true)
 	})
 })

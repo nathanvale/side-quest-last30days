@@ -197,8 +197,27 @@ export class ProgressDisplay {
 	showCached(ageHours: number | null = null): void {
 		const ageStr = ageHours != null ? ` (${ageHours.toFixed(1)}h old)` : ''
 		process.stderr.write(
-			`${GREEN}⚡${RESET} ${DIM}Using cached results${ageStr} - use --refresh for fresh data${RESET}\n\n`,
+			`${GREEN}⚡${RESET} ${DIM}Using cached results${ageStr} - use --refresh for fresh data${RESET}\n`,
 		)
+	}
+
+	/** Show rate-limit degraded state with optional stale-cache info. */
+	showRateLimited(
+		source: string,
+		usedCache: boolean,
+		cacheAgeHours: number | null = null,
+	): void {
+		if (usedCache) {
+			const ageStr =
+				cacheAgeHours != null ? ` (${cacheAgeHours.toFixed(1)}h old)` : ''
+			process.stderr.write(
+				`${YELLOW}⚠ ${source} rate-limited - using cached data${ageStr}. Try again shortly or use --refresh later.${RESET}\n`,
+			)
+		} else {
+			process.stderr.write(
+				`${YELLOW}⚠ ${source} rate-limited - no cached results available. Try again in a few minutes.${RESET}\n`,
+			)
+		}
 	}
 
 	showError(message: string): void {

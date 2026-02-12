@@ -4,6 +4,9 @@ import * as http from './http.js'
 
 const XAI_RESPONSES_URL = 'https://api.x.ai/v1/responses'
 
+/** Cache-busting version for X search prompt behavior. */
+export const X_PROMPT_VERSION = '2026-02-11-v1'
+
 /** Depth configurations: [min, max] posts to request. */
 const DEPTH_CONFIG: Record<string, [number, number]> = {
 	quick: [8, 12],
