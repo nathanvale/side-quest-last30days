@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+### Patch Changes
+
+- [#17](https://github.com/nathanvale/side-quest-last-30-days/pull/17) [`b9611c7`](https://github.com/nathanvale/side-quest-last-30-days/commit/b9611c7034402f975cce7eed35a4a8296319878b) Thanks [@nathanvale](https://github.com/nathanvale)! - Add comprehensive smoke test prompt for end-to-end validation
+
+- [#19](https://github.com/nathanvale/side-quest-last-30-days/pull/19) [`145ab63`](https://github.com/nathanvale/side-quest-last-30-days/commit/145ab638b122c3eb98d9bc515edcba7b0c2b35dc) Thanks [@nathanvale](https://github.com/nathanvale)! - Fix 9 critical issues from staff engineer review: improved error handling, CLI validation, type safety, and code documentation
+
 ## 0.1.1
 
 ### Patch Changes
