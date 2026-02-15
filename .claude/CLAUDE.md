@@ -28,7 +28,7 @@ bun test tests/index.test.ts  # Run single test file
 bun test --watch         # Watch mode
 
 # CLI usage (after build)
-last-30-days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=auto|reddit|x|both] [--quick|--deep] [--debug] [--include-web]
+last-30-days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=auto|reddit|x|both] [--quick|--deep] [--debug] [--include-web] [--refresh] [--no-cache]
 ```
 
 ---
@@ -55,19 +55,42 @@ last-30-days <topic> [--mock] [--emit=compact|json|md|context|path] [--sources=a
 
 `Report` is the central data structure containing `RedditItem[]`, `XItem[]`, `WebSearchItem[]`, metadata, and errors. Each item has `score` (0-100), `subs` (component scores), `engagement`, and `date_confidence`.
 
-### Supporting modules
+### Resilience layer
 
-- `http.ts` - Fetch wrapper with retries, timeouts, and debug logging (`LAST_30_DAYS_DEBUG=1`)
-- `cache.ts` - File-based caching in `~/.cache/last-30-days/` (24h TTL for results, 7d for model selection)
-- `dates.ts` - Date parsing, formatting, recency scoring
-- `ui.ts` - Terminal progress display
-- `websearch.ts` - Web search result parsing, date extraction from URLs/snippets, domain exclusion
+- **HTTP** (`http.ts`) - 5 retries with exponential backoff + jitter, 429 classification (transient vs quota/billing), Retry-After header parsing, structured `RateLimitError` type.
+- **Cache** (`cache.ts`) - Per-source versioned search cache (1h TTL), stale fallback on transient 429 (24h TTL), enrichment cache (24h), model selection cache (7d). Atomic writes with file locking for concurrency safety.
 
 ### External API dependencies
 
 - **OpenAI Responses API** (`OPENAI_API_KEY`) - Reddit discovery via web search tool
 - **xAI Responses API** (`XAI_API_KEY`) - X/Twitter discovery via x_search tool
 - **Reddit JSON API** (no key needed) - Thread enrichment with real engagement data
+
+---
+
+## Downstream Consumer: research plugin
+
+The primary consumer is the **research plugin** at `~/code/side-quest-plugins/plugins/research/`. It never imports the library - it always invokes the CLI via `bunx --bun @side-quest/last-30-days`. Understanding how it's consumed matters when changing CLI output, flags, or exit codes.
+
+### How it's called
+
+- **Sub-agents** (beat-reporter, runs on Haiku): `bunx --bun @side-quest/last-30-days "<topic>" --emit=compact [flags]` - compact output feeds into supplementary WebSearch/WebFetch queries
+- **Scripts** (ai-trends-digest): `Bun.spawn(['bunx', '--bun', '@side-quest/last-30-days', topic, '--emit=json'])` - JSON output parsed programmatically as `Report` type
+
+### Output format contract
+
+| Consumer | Format | Why |
+|----------|--------|-----|
+| Beat reporter agents | `--emit=compact` | Claude-friendly markdown for synthesis |
+| Digest script | `--emit=json` | Programmatic `Report` parsing |
+| Human readers | `--emit=md` | Full markdown report |
+
+### What would break the plugin
+
+- Changing the JSON schema of `Report` (digest script parses it)
+- Changing compact output structure (beat reporters rely on section headers)
+- Removing/renaming CLI flags (hardcoded in skill docs and agent definitions)
+- Changing exit codes (script checks `exitCode !== 0`)
 
 ---
 

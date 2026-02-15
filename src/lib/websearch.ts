@@ -1,9 +1,18 @@
 /**
  * WebSearch module for last-30-days skill.
  *
- * WebSearch uses Claude's built-in WebSearch tool, which runs INSIDE Claude Code.
- * Unlike Reddit/X which use external APIs, WebSearch results are obtained by Claude
- * directly and passed to this module for normalization and scoring.
+ * ARCHITECTURE NOTE: This module provides parsing and normalization for web
+ * search results, but the CLI does NOT call these functions directly. Web
+ * search results are obtained by Claude using its built-in WebSearch tool
+ * and passed to this module for normalization by the library API consumer.
+ *
+ * The CLI's web mode (--include-web or --sources=web) outputs structured
+ * instructions for Claude to perform the web search, rather than executing
+ * it directly. This is because the CLI runs as a subprocess, while Claude's
+ * WebSearch runs in-process.
+ *
+ * These functions ARE used by the library export (src/index.ts) for
+ * programmatic consumers who want to normalize/score web results.
  */
 
 import { defaultWebSearchItem, type WebSearchItem } from './schema.js'

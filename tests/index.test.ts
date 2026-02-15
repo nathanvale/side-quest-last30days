@@ -18,7 +18,9 @@ import {
 	normalizeText,
 	parseDate,
 	parseRateLimitResetMs,
+	parseRedditResponse,
 	parseRetryAfterMs,
+	parseXResponse,
 	RateLimitError,
 	recencyScore,
 	renderCompact,
@@ -802,6 +804,93 @@ describe('cli', () => {
 		// Mock runs never hit cache, so from_cache should not appear in JSON
 		expect(output.from_cache).toBeUndefined()
 	})
+
+	test('--emit json (space-separated) produces JSON output', () => {
+		const result = runCli(['test topic', '--mock', '--emit', 'json'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout)
+		const output = JSON.parse(stdout) as { topic: string }
+		expect(output.topic).toBe('test topic')
+	})
+
+	test('--sources reddit (space-separated) works', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--sources', 'reddit'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout)
+		const output = JSON.parse(stdout) as { mode: string }
+		expect(output.mode).toBe('reddit-only')
+	})
+
+	test('--emit=invalid exits with error', () => {
+		const result = runCli(['test topic', '--mock', '--emit=invalid'])
+		expect(result.exitCode).toBe(1)
+		const stderr = new TextDecoder().decode(result.stderr)
+		expect(stderr).toContain('Invalid --emit')
+	})
+
+	test('--sources=invalid exits with error', () => {
+		const result = runCli(['test topic', '--mock', '--sources=invalid'])
+		expect(result.exitCode).toBe(1)
+		const stderr = new TextDecoder().decode(result.stderr)
+		expect(stderr).toContain('Invalid --sources')
+	})
+
+	test('unknown --flag exits with error', () => {
+		const result = runCli(['test topic', '--mock', '--unknown-flag'])
+		expect(result.exitCode).toBe(1)
+		const stderr = new TextDecoder().decode(result.stderr)
+		expect(stderr).toContain('Unknown flag')
+	})
+
+	test('--emit=json with --include-web produces valid JSON', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--include-web'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout)
+		const output = JSON.parse(stdout) as Record<string, unknown>
+		expect(output.topic).toBe('test topic')
+		expect(output.web_search_instructions).toBeDefined()
+	})
+
+	test('--mock --include-web produces mode all', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--include-web'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout)
+		const output = JSON.parse(stdout) as { mode: string }
+		expect(output.mode).toBe('all')
+	})
+
+	test('--mock --sources=reddit produces mode reddit-only', () => {
+		const result = runCli(['test topic', '--mock', '--emit=json', '--sources=reddit'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout)
+		const output = JSON.parse(stdout) as { mode: string }
+		expect(output.mode).toBe('reddit-only')
+	})
+})
+
+// ---------------------------------------------------------------------------
+// isModelAccessError: 404 handling
+// ---------------------------------------------------------------------------
+describe('isModelAccessError 404', () => {
+	test('returns true for 404 status', () => {
+		const error = new HTTPError('Not Found')
+		error.status_code = 404
+		error.body = 'model not found'
+		expect(isModelAccessError(error)).toBe(true)
+	})
+
+	test('returns true for 404 with empty body', () => {
+		const error = new HTTPError('Not Found')
+		error.status_code = 404
+		error.body = ''
+		expect(isModelAccessError(error)).toBe(true)
+	})
+
+	test('returns true for 404 with null body', () => {
+		const error = new HTTPError('Not Found')
+		error.status_code = 404
+		expect(isModelAccessError(error)).toBe(true)
+	})
 })
 
 // ---------------------------------------------------------------------------
@@ -878,5 +967,159 @@ describe('supportsWebSearchFilters', () => {
 	test('is case-insensitive', () => {
 		expect(supportsWebSearchFilters('GPT-5.2')).toBe(true)
 		expect(supportsWebSearchFilters('GPT-4o')).toBe(true)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// parser robustness: NaN guards
+// ---------------------------------------------------------------------------
+describe('parser NaN guards', () => {
+	test('parseRedditResponse handles non-numeric relevance', () => {
+		const resp = {
+			output: [
+				{
+					type: 'message',
+					content: [
+						{
+							type: 'output_text',
+							text: JSON.stringify({
+								items: [
+									{
+										title: 'Test post',
+										url: 'https://www.reddit.com/r/test/comments/abc123/test/',
+										subreddit: 'test',
+										relevance: 'high',
+										why_relevant: 'test',
+									},
+								],
+							}),
+						},
+					],
+				},
+			],
+		}
+		const items = parseRedditResponse(resp)
+		expect(items.length).toBe(1)
+		const rel = items[0]!.relevance as number
+		expect(Number.isFinite(rel)).toBe(true)
+		expect(rel).toBe(0.5)
+	})
+
+	test('parseXResponse handles non-numeric relevance', () => {
+		const resp = {
+			output: [
+				{
+					type: 'message',
+					content: [
+						{
+							type: 'output_text',
+							text: JSON.stringify({
+								items: [
+									{
+										text: 'Test post',
+										url: 'https://x.com/user/status/123',
+										author_handle: 'user',
+										relevance: 'very high',
+									},
+								],
+							}),
+						},
+					],
+				},
+			],
+		}
+		const items = parseXResponse(resp)
+		expect(items.length).toBe(1)
+		const rel = items[0]!.relevance as number
+		expect(Number.isFinite(rel)).toBe(true)
+		expect(rel).toBe(0.5)
+	})
+
+	test('parseXResponse handles non-numeric engagement', () => {
+		const resp = {
+			output: [
+				{
+					type: 'message',
+					content: [
+						{
+							type: 'output_text',
+							text: JSON.stringify({
+								items: [
+									{
+										text: 'Test post',
+										url: 'https://x.com/user/status/123',
+										author_handle: 'user',
+										relevance: 0.8,
+										engagement: { likes: '1k', reposts: 'many' },
+									},
+								],
+							}),
+						},
+					],
+				},
+			],
+		}
+		const items = parseXResponse(resp)
+		expect(items.length).toBe(1)
+		const eng = items[0]!.engagement as Record<string, unknown>
+		expect(eng.likes).toBeNull()
+		expect(eng.reposts).toBeNull()
+	})
+
+	test('parseXResponse preserves zero engagement values', () => {
+		const resp = {
+			output: [
+				{
+					type: 'message',
+					content: [
+						{
+							type: 'output_text',
+							text: JSON.stringify({
+								items: [
+									{
+										text: 'Test post',
+										url: 'https://x.com/user/status/123',
+										author_handle: 'user',
+										relevance: 0.8,
+										engagement: { likes: 0, reposts: 0, replies: 0, quotes: 0 },
+									},
+								],
+							}),
+						},
+					],
+				},
+			],
+		}
+		const items = parseXResponse(resp)
+		expect(items.length).toBe(1)
+		const eng = items[0]!.engagement as Record<string, unknown>
+		expect(eng.likes).toBe(0)
+		expect(eng.reposts).toBe(0)
+		expect(eng.replies).toBe(0)
+		expect(eng.quotes).toBe(0)
+	})
+
+	test('scoreRedditItems produces valid scores with NaN relevance', () => {
+		const items = [
+			{
+				id: 'R1',
+				title: 'Test',
+				url: 'u',
+				subreddit: 's',
+				date: '2026-02-01',
+				date_confidence: 'high',
+				engagement: { score: 100, num_comments: 50, upvote_ratio: 0.95 },
+				top_comments: [],
+				comment_insights: [],
+				relevance: NaN,
+				why_relevant: '',
+				subs: { relevance: 0, recency: 0, engagement: 0 },
+				score: 0,
+			},
+		]
+		const scored = scoreRedditItems(items)
+		expect(Number.isFinite(scored[0]!.score)).toBe(true)
+		expect(scored[0]!.score).toBeGreaterThanOrEqual(0)
+		expect(scored[0]!.score).toBeLessThanOrEqual(100)
 	})
 })

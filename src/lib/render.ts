@@ -1,6 +1,6 @@
 /** Output rendering for last-30-days skill. */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -380,6 +380,21 @@ export function writeOutputs(
 ): void {
 	ensureOutputDir()
 
+	// Clean stale raw files from previous runs
+	const rawFiles = [
+		'raw_openai.json',
+		'raw_xai.json',
+		'raw_reddit_threads_enriched.json',
+	]
+	for (const file of rawFiles) {
+		try {
+			unlinkSync(join(OUTPUT_DIR, file))
+		} catch {
+			// ignore if not exists
+		}
+	}
+
+	// Write report files (always)
 	writeFileSync(
 		join(OUTPUT_DIR, 'report.json'),
 		JSON.stringify(reportToDict(report), null, 2),

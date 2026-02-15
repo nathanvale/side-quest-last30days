@@ -92,7 +92,9 @@ export function scoreRedditItems(
 
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i]!
-		const relScore = Math.floor(item.relevance * 100)
+		const relScore = Number.isFinite(item.relevance)
+			? Math.floor(item.relevance * 100)
+			: 50
 		const recScore = recencyScore(item.date, maxDays)
 		const engScore =
 			engNormalized[i] != null
@@ -125,7 +127,9 @@ export function scoreXItems(items: XItem[], maxDays = 30): XItem[] {
 
 	for (let i = 0; i < items.length; i++) {
 		const item = items[i]!
-		const relScore = Math.floor(item.relevance * 100)
+		const relScore = Number.isFinite(item.relevance)
+			? Math.floor(item.relevance * 100)
+			: 50
 		const recScore = recencyScore(item.date, maxDays)
 		const engScore =
 			engNormalized[i] != null
@@ -157,7 +161,9 @@ export function scoreWebsearchItems(
 	if (items.length === 0) return items
 
 	for (const item of items) {
-		const relScore = Math.floor(item.relevance * 100)
+		const relScore = Number.isFinite(item.relevance)
+			? Math.floor(item.relevance * 100)
+			: 50
 		const recScore = recencyScore(item.date, maxDays)
 
 		item.subs = { relevance: relScore, recency: recScore, engagement: 0 }

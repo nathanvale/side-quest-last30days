@@ -69,6 +69,7 @@ export function supportsWebSearchFilters(model: string): boolean {
 
 /** Check if error is due to model access/verification or feature-incompatibility issues. */
 export function isModelAccessError(error: http.HTTPError): boolean {
+	if (error.status_code === 404) return true
 	if (error.status_code !== 400) return false
 	if (!error.body) return false
 	const bodyLower = error.body.toLowerCase()
@@ -177,6 +178,12 @@ export async function searchReddit(
 	throw new http.HTTPError('No models available')
 }
 
+/** Safe relevance parsing with NaN guard. */
+function safeRelevance(val: unknown): number {
+	const n = Number(val ?? 0.5)
+	return Number.isFinite(n) ? Math.min(1.0, Math.max(0.0, n)) : 0.5
+}
+
 /** Parse OpenAI response to extract Reddit items. */
 export function parseRedditResponse(
 	response: Record<string, unknown>,
@@ -256,7 +263,7 @@ export function parseRedditResponse(
 				.replace(/^r\//, ''),
 			date: item.date ?? null,
 			why_relevant: String(item.why_relevant ?? '').trim(),
-			relevance: Math.min(1.0, Math.max(0.0, Number(item.relevance ?? 0.5))),
+			relevance: safeRelevance(item.relevance),
 		}
 
 		// Validate date format

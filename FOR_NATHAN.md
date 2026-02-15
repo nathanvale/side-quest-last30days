@@ -223,9 +223,12 @@ The insight extraction (`extractCommentInsights`) is clever about filtering nois
 
 ## The HTTP Layer
 
-The `http.ts` module wraps `fetch` with retry logic and debug support. Key decisions:
+The `http.ts` module wraps `fetch` with a production-grade retry engine and structured error hierarchy. Key decisions:
 
-- **3 retries with exponential backoff** (1s, 2s, 3s). But no retry for 4xx errors (except 429 rate limits) -- a bad request won't become good on retry.
+- **5 retries with exponential backoff + jitter** (1s base, doubling, capped at 30s, plus up to 1s random jitter). The jitter prevents thundering herd when multiple requests hit rate limits simultaneously.
+- **429 classification**: Not all rate limits are equal. The `isRetryableRateLimit()` function inspects the error body to distinguish transient rate limits (retry them) from quota/billing hard-fails like `insufficient_quota` or `billing_hard_limit_reached` (throw immediately -- no amount of waiting will help).
+- **Server-hinted delays**: On 429, the retry engine parses `Retry-After` (seconds or HTTP date) and `x-ratelimit-reset-requests`/`x-ratelimit-reset-tokens` headers (duration strings like `"1m30s"`, `"250ms"`). It picks the longest hint and uses that as the minimum wait, falling back to exponential backoff if no hints are provided.
+- **Structured error types**: `HTTPError` carries status code, response body, request ID, error code, and error type. `RateLimitError` extends it with `retryable`, `retry_after_ms`, `ratelimit_reset_ms`, and `retries_attempted`. This metadata flows up to the CLI for degraded UX messaging -- the user sees "Reddit rate-limited (429)" not just "search failed."
 - **30-second default timeout** with per-request overrides. Search calls use 90-180s depending on depth.
 - **Custom User-Agent**: `last-30-days-skill/1.0 (Claude Code Skill)`. Reddit's API blocks generic User-Agents.
 - **Debug mode** via `LAST_30_DAYS_DEBUG=1`. Logs every request URL, payload keys, response status, and error bodies to stderr. Invaluable when an API call fails silently.
@@ -234,14 +237,34 @@ The `http.ts` module wraps `fetch` with retry logic and debug support. Key decis
 
 ## The Caching System
 
-File-based caching in `~/.cache/last-30-days/` with two TTLs:
+File-based caching in `~/.cache/last-30-days/` with four cache tiers:
 
-| Cache Type | TTL | Key |
-|-----------|-----|-----|
-| Search results | 24 hours | SHA256 of `topic + fromDate + toDate + sources` |
-| Model selection | 7 days | Provider name (`openai`, `xai`) |
+| Cache Type | TTL | Key | Purpose |
+|-----------|-----|-----|---------|
+| Per-source search | 1 hour (configurable) | Versioned hash of topic + dates + days + source + depth + model + prompt version | Fresh results per search source |
+| Stale search fallback | 24 hours (configurable) | Same key as above | Serve stale data when upstream returns transient 429 |
+| Enrichment | 24 hours | Hash of source URL | Individual Reddit thread data |
+| Model selection | 7 days | Provider name (`openai`, `xai`) | Avoid re-querying model lists |
 
-Cache keys are hashed to avoid filesystem issues with special characters in topics. The cache is silent on failure -- if the cache directory is unwritable, the tool just fetches fresh data. `loadCacheWithAge()` returns both the data and the cache age, which the render layer uses to show "cached (3.2h old)" in the output.
+The per-source cache was the big addition in the 429 fix. The key includes a schema version (`SEARCH_CACHE_SCHEMA_VERSION = 'v2'`), so changing the cache record format automatically invalidates old entries without manual cleanup.
+
+### Cache Concurrency Safety
+
+Concurrent runs of the same query (e.g., two Claude Code sessions researching the same topic) could corrupt the cache file mid-write. The caching layer now uses:
+
+- **Atomic writes**: Data is written to a temporary file (`cache.tmp.{pid}.{timestamp}.{random}`) then renamed into place via `renameSync`. Rename is atomic on POSIX filesystems, so readers never see a half-written file.
+- **Per-key file locking**: `acquireCacheLock()` uses exclusive file creation (`openSync` with `'wx'` flag) as a cross-process mutex. It polls every 100ms with a 5-second timeout, and auto-breaks stale locks older than 5 minutes (crashed process cleanup).
+
+### Cache Bypass
+
+Two new CLI flags control cache behavior:
+
+- `--refresh`: Bypass cache reads (force fresh search) but still write results to cache
+- `--no-cache`: Disable both cache reads and writes entirely
+
+The stale fallback path is the resilience play: when Reddit returns a transient 429 after all 5 retries are exhausted, the CLI checks for any cached result within the stale TTL (24h). If found, it serves the stale data with a "cached (Xh old)" indicator rather than returning empty results. The user gets slightly old data instead of nothing.
+
+Cache TTLs are configurable via environment variables: `LAST_30_DAYS_CACHE_TTL`, `LAST_30_DAYS_STALE_CACHE_TTL`, and `LAST_30_DAYS_ENRICH_CACHE_TTL`.
 
 ---
 
@@ -271,7 +294,7 @@ The compact format includes a "data freshness" assessment. If fewer than 5 items
 
 ## The CLI Design
 
-The argument parser is hand-rolled (no deps). It supports both `--key=value` and `--key value` syntax for `--days`. Flags like `--quick` and `--deep` are mutually exclusive (the CLI errors if you pass both). Topics can be multi-word without quotes: `last-30-days Claude Code skills` works because non-flag arguments are concatenated.
+The argument parser is hand-rolled (no deps). It supports both `--key=value` and `--key value` syntax for `--days`. Flags like `--quick` and `--deep` are mutually exclusive (the CLI errors if you pass both). Cache control flags `--refresh` and `--no-cache` give fine-grained control over the caching layer. Topics can be multi-word without quotes: `last-30-days Claude Code skills` works because non-flag arguments are concatenated.
 
 The progress display (`ui.ts`) uses ANSI color codes with TTY detection fallback. It shows animated spinners with random witty messages during search phases. The color scheme is deliberate: purple for the tool, yellow for Reddit, cyan for X, green for web, red for errors. Each phase is timed, and the completion message shows the total elapsed time.
 
@@ -279,13 +302,21 @@ The progress display (`ui.ts`) uses ANSI color codes with TTY detection fallback
 
 ## The Test Suite
 
-All 40 tests live in a single file (`tests/index.test.ts`). They cover:
+All 94 tests live in a single file (`tests/index.test.ts`). They cover:
 
 - **Pure functions**: Date parsing, n-gram generation, Jaccard similarity, URL date extraction, domain extraction
 - **Schema**: Report creation, serialization round-trip, backward compatibility
 - **Scoring**: Custom `maxDays` parameter propagation
 - **Rendering**: Context snippets, full reports, compact output with `days` field
 - **CLI integration**: End-to-end with `--mock` flag, `--days` validation
+- **429 classification**: Transient vs quota/billing rate limits, null/empty/garbage body handling
+- **Retry-After parsing**: Seconds, HTTP dates, edge cases (negative, zero, NaN)
+- **x-ratelimit-reset parsing**: Duration strings (`"1s"`, `"6m0s"`, `"1m30s"`, `"250ms"`), sentinel values, invalid formats
+- **Backoff delays**: Exponential growth with jitter bounds
+- **Error hierarchy**: `HTTPError` and `RateLimitError` field propagation, error metadata extraction
+- **Cache keys**: Versioned source cache key generation, enrichment cache keys, schema version inclusion
+- **Model access detection**: `supportsWebSearchFilters()` version boundary checks
+- **OpenAI model access errors**: `isModelAccessError()` pattern matching
 
 The `--mock` flag is the testing cornerstone. Mock data lives in `fixtures/` -- sample OpenAI responses, xAI responses, Reddit thread JSON, and model lists. This means CI runs are deterministic, fast, and don't need API keys.
 
@@ -339,7 +370,9 @@ Bun 1.3.x's hoisted linker sometimes leaks devDependency folders to the project 
 
 ### Reddit's JSON API Rate Limiting
 
-Reddit doesn't require an API key for `.json` endpoints, but it does rate limit. The enrichment step processes threads sequentially (not in parallel) to stay under the limit. If enrichment fails for a thread, it silently continues with unenriched data -- the item just gets a lower engagement score.
+Reddit doesn't require an API key for `.json` endpoints, but it does rate limit aggressively. The enrichment step processes threads sequentially (not in parallel) to stay under the limit. If enrichment fails for a thread, it silently continues with unenriched data -- the item just gets a lower engagement score.
+
+The 429 handling is now multi-layered: the HTTP layer retries with server-hinted delays (up to 5 attempts), the CLI layer falls back to stale cached results if retries are exhausted, and the progress display shows degraded UX messaging with per-source attribution ("Reddit rate-limited, using cached results"). There's also a retry amplification guard -- if the initial search was rate-limited, the CLI skips the "core-subject retry" (a secondary search pass) for that source to avoid hammering a service that's already pushing back.
 
 ### The OpenAI Response Format
 
@@ -371,7 +404,7 @@ The architecture enables several natural extensions:
 
 This codebase embodies a principle: **AI is good at finding things, humans (and their upvotes) are good at evaluating things**. The scoring algorithm doesn't try to be smart about what's important -- it defers to the crowd's engagement signals. The date detection doesn't trust the LLM's date estimates -- it goes to the source. The deduplication doesn't ask the LLM to identify duplicates -- it uses math.
 
-The result is a tool that combines the breadth of AI search with the trustworthiness of real-world signals. And at ~900 lines of library code across 16 modules, it does this without any runtime dependencies beyond a single shared `@side-quest/core` package.
+The result is a tool that combines the breadth of AI search with the trustworthiness of real-world signals. The library export (`src/index.ts`) now exposes the full caching, HTTP/retry, and rate-limit classification APIs alongside the search and scoring functions -- making it possible to build custom pipelines that benefit from the same resilience layer the CLI uses.
 
 Not bad for a side quest.
 

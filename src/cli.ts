@@ -122,8 +122,20 @@ function parseArgs(args: string[]) {
 			mock = true
 		} else if (arg.startsWith('--emit=')) {
 			emit = arg.slice('--emit='.length)
+		} else if (arg === '--emit') {
+			const value = args[i + 1]
+			if (value && !value.startsWith('-')) {
+				emit = value
+				i += 1
+			}
 		} else if (arg.startsWith('--sources=')) {
 			sources = arg.slice('--sources='.length)
+		} else if (arg === '--sources') {
+			const value = args[i + 1]
+			if (value && !value.startsWith('-')) {
+				sources = value
+				i += 1
+			}
 		} else if (arg.startsWith('--days=')) {
 			days = parseDaysValue(arg.slice('--days='.length))
 		} else if (arg === '--days') {
@@ -146,9 +158,29 @@ function parseArgs(args: string[]) {
 			refresh = true
 		} else if (arg === '--no-cache') {
 			noCache = true
+		} else if (arg.startsWith('--')) {
+			process.stderr.write(`Error: Unknown flag: ${arg}\n`)
+			process.stderr.write('Run last-30-days --help for usage.\n')
+			process.exit(1)
 		} else if (!arg.startsWith('-')) {
 			topic = topic ? `${topic} ${arg}` : arg
 		}
+	}
+
+	const validEmits = ['compact', 'json', 'md', 'context', 'path']
+	if (!validEmits.includes(emit)) {
+		process.stderr.write(
+			`Error: Invalid --emit value: "${emit}". Valid: ${validEmits.join(', ')}\n`,
+		)
+		process.exit(1)
+	}
+
+	const validSources = ['auto', 'reddit', 'x', 'both', 'web']
+	if (!validSources.includes(sources)) {
+		process.stderr.write(
+			`Error: Invalid --sources value: "${sources}". Valid: ${validSources.join(', ')}\n`,
+		)
+		process.exit(1)
 	}
 
 	return {
@@ -522,7 +554,17 @@ async function main() {
 	// Determine sources
 	let sources: string
 	if (args.mock) {
-		sources = args.sources === 'auto' ? 'both' : args.sources
+		// In mock mode, simulate having both keys available
+		const [effectiveSources, error] = config.validateSources(
+			args.sources,
+			'both',
+			args.includeWeb,
+		)
+		sources = effectiveSources
+		if (error && !error.includes('WebSearch fallback')) {
+			process.stderr.write(`Error: ${error}\n`)
+			process.exit(1)
+		}
 	} else {
 		const [effectiveSources, error] = config.validateSources(
 			args.sources,
@@ -807,7 +849,13 @@ async function main() {
 	report.context_snippet_md = render.renderContextSnippet(report)
 
 	// Write outputs
-	render.writeOutputs(report, rawOpenai, rawXai, rawRedditEnriched)
+	try {
+		render.writeOutputs(report, rawOpenai, rawXai, rawRedditEnriched)
+	} catch (e) {
+		if (args.debug) {
+			process.stderr.write(`Warning: Could not write output files: ${e}\n`)
+		}
+	}
 
 	// Show completion
 	if (sources === 'web') {
@@ -820,7 +868,17 @@ async function main() {
 	if (args.emit === 'compact') {
 		console.log(render.renderCompact(report, 15, missingKeys))
 	} else if (args.emit === 'json') {
-		console.log(JSON.stringify(schema.reportToDict(report), null, 2))
+		const dict = schema.reportToDict(report) as Record<string, unknown>
+		if (webNeeded) {
+			dict.web_search_instructions = {
+				topic: args.topic,
+				date_range: { from: fromDate, to: toDate },
+				days: args.days,
+				instructions:
+					'Use WebSearch tool to find 8-15 relevant web pages. Exclude reddit.com, x.com, twitter.com.',
+			}
+		}
+		console.log(JSON.stringify(dict, null, 2))
 	} else if (args.emit === 'md') {
 		console.log(render.renderFullReport(report))
 	} else if (args.emit === 'context') {
@@ -829,8 +887,11 @@ async function main() {
 		console.log(render.getContextPath())
 	}
 
-	// Output WebSearch instructions if needed
-	if (webNeeded) {
+	// Web mode handoff: print structured instructions for Claude's WebSearch tool.
+	// Unlike Reddit/X, web search runs in Claude's process, not ours.
+	// See src/lib/websearch.ts module comment for architecture rationale.
+	// Output WebSearch instructions if needed (skip for JSON - already embedded)
+	if (webNeeded && args.emit !== 'json') {
 		console.log(`\n${'='.repeat(60)}`)
 		console.log('### WEBSEARCH REQUIRED ###')
 		console.log('='.repeat(60))

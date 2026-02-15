@@ -123,3 +123,8 @@ export async function getModels(
 
 	return result
 }
+
+/** Invalidate cached model for a provider. */
+export function invalidateCachedModel(provider: string): void {
+	cache.clearCachedModel(provider)
+}

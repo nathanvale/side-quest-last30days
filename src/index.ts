@@ -8,6 +8,7 @@
 // Cache
 export {
 	acquireCacheLock,
+	clearCachedModel,
 	getCacheKey,
 	getEnrichmentCacheKey,
 	getEnrichmentTTL,
@@ -51,6 +52,8 @@ export {
 	parseRetryAfterMs,
 	RateLimitError,
 } from './lib/http.js'
+// Models
+export { invalidateCachedModel } from './lib/models.js'
 // Normalization
 export {
 	filterByDateRange,
@@ -60,6 +63,7 @@ export {
 // OpenAI Reddit
 export {
 	isModelAccessError,
+	parseRedditResponse,
 	supportsWebSearchFilters,
 } from './lib/openai-reddit.js'
 // Rendering
@@ -98,3 +102,5 @@ export {
 	normalizeWebsearchItems,
 	parseWebsearchResults,
 } from './lib/websearch.js'
+// xAI X
+export { parseXResponse } from './lib/xai-x.js'
