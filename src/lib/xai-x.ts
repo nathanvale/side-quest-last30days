@@ -85,6 +85,19 @@ export async function searchX(
 	return http.post(XAI_RESPONSES_URL, payload, headers, { timeout })
 }
 
+/** Safe relevance parsing with NaN guard. */
+function safeRelevance(val: unknown): number {
+	const n = Number(val ?? 0.5)
+	return Number.isFinite(n) ? Math.min(1.0, Math.max(0.0, n)) : 0.5
+}
+
+/** Safe number parsing with null fallback for non-numeric values. */
+function safeNumber(val: unknown): number | null {
+	if (val == null) return null
+	const n = Number(val)
+	return Number.isFinite(n) ? n : null
+}
+
 /** Parse xAI response to extract X items. */
 export function parseXResponse(
 	response: Record<string, unknown>,
@@ -160,10 +173,10 @@ export function parseXResponse(
 		const engRaw = item.engagement as Record<string, unknown> | undefined
 		if (engRaw && typeof engRaw === 'object') {
 			engagement = {
-				likes: engRaw.likes ? Number(engRaw.likes) : null,
-				reposts: engRaw.reposts ? Number(engRaw.reposts) : null,
-				replies: engRaw.replies ? Number(engRaw.replies) : null,
-				quotes: engRaw.quotes ? Number(engRaw.quotes) : null,
+				likes: safeNumber(engRaw.likes),
+				reposts: safeNumber(engRaw.reposts),
+				replies: safeNumber(engRaw.replies),
+				quotes: safeNumber(engRaw.quotes),
 			}
 		}
 
@@ -179,7 +192,7 @@ export function parseXResponse(
 			date: item.date ?? null,
 			engagement,
 			why_relevant: String(item.why_relevant ?? '').trim(),
-			relevance: Math.min(1.0, Math.max(0.0, Number(item.relevance ?? 0.5))),
+			relevance: safeRelevance(item.relevance),
 		}
 
 		// Validate date format

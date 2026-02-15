@@ -325,6 +325,16 @@ export function setCachedModel(provider: string, model: string): void {
 	saveModelCache(cache)
 }
 
+/** Clear cached model for a provider (used when model becomes unavailable). */
+export function clearCachedModel(provider: string): void {
+	const cacheFile = join(CACHE_DIR, `model_${provider}.json`)
+	try {
+		unlinkSync(cacheFile)
+	} catch {
+		// ignore if not exists
+	}
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
 }
