@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+### Patch Changes
+
+- [#24](https://github.com/nathanvale/side-quest-last-30-days/pull/24) [`f7fd622`](https://github.com/nathanvale/side-quest-last-30-days/commit/f7fd62225bd789db1b85678f4513fc1ce9906f71) Thanks [@nathanvale](https://github.com/nathanvale)! - Add --outdir flag to write output files to a custom directory instead of the default ~/.local/share/last-30-days/out/. This enables parallel CLI invocations to write to isolated directories without racing on the same output path.
+
 ## 0.1.2
 
 ### Patch Changes
