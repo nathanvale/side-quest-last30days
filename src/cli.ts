@@ -16,6 +16,7 @@
  *   --include-web    Include general web search alongside Reddit/X
  *   --refresh        Bypass cache reads and force fresh search
  *   --no-cache       Disable cache reads and writes
+ *   --outdir=PATH    Write output files to PATH instead of default location
  */
 
 import { readFileSync } from 'node:fs'
@@ -75,6 +76,7 @@ Options:
   --include-web    Include general web search alongside Reddit/X
   --refresh        Bypass cache reads and force fresh search
   --no-cache       Disable cache reads and writes
+  --outdir=PATH    Write output files to PATH instead of default location
   --mock           Use fixture data instead of real API calls
   --debug          Enable verbose debug logging
   -h, --help       Show this help message
@@ -113,6 +115,7 @@ function parseArgs(args: string[]) {
 	let refresh = false
 	let noCache = false
 	let days = 30
+	let outdir = ''
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i]!
@@ -158,6 +161,14 @@ function parseArgs(args: string[]) {
 			refresh = true
 		} else if (arg === '--no-cache') {
 			noCache = true
+		} else if (arg.startsWith('--outdir=')) {
+			outdir = arg.slice('--outdir='.length)
+		} else if (arg === '--outdir') {
+			const value = args[i + 1]
+			if (value && !value.startsWith('-')) {
+				outdir = value
+				i += 1
+			}
 		} else if (arg.startsWith('--')) {
 			process.stderr.write(`Error: Unknown flag: ${arg}\n`)
 			process.stderr.write('Run last-30-days --help for usage.\n')
@@ -195,6 +206,7 @@ function parseArgs(args: string[]) {
 		refresh,
 		noCache,
 		days,
+		outdir,
 	}
 }
 
@@ -850,7 +862,13 @@ async function main() {
 
 	// Write outputs
 	try {
-		render.writeOutputs(report, rawOpenai, rawXai, rawRedditEnriched)
+		render.writeOutputs(
+			report,
+			rawOpenai,
+			rawXai,
+			rawRedditEnriched,
+			args.outdir || undefined,
+		)
 	} catch (e) {
 		if (args.debug) {
 			process.stderr.write(`Warning: Could not write output files: ${e}\n`)
@@ -884,7 +902,7 @@ async function main() {
 	} else if (args.emit === 'context') {
 		console.log(report.context_snippet_md)
 	} else if (args.emit === 'path') {
-		console.log(render.getContextPath())
+		console.log(render.getContextPath(args.outdir || undefined))
 	}
 
 	// Web mode handoff: print structured instructions for Claude's WebSearch tool.

@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
+import { existsSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
 	backoffDelay,
 	createReport,
@@ -7,6 +10,7 @@ import {
 	extractDateFromSnippet,
 	extractDateFromUrl,
 	extractDomain,
+	getContextPath,
 	getDateConfidence,
 	getDateRange,
 	getNgrams,
@@ -296,6 +300,17 @@ describe('render', () => {
 	test('renderCompact sparse warning uses report days', () => {
 		const report = createReport('testing', '2025-01-17', '2025-01-31', 'both', null, null, 14)
 		expect(renderCompact(report)).toContain('last 14 days')
+	})
+
+	test('getContextPath returns default path when no outdir', () => {
+		const path = getContextPath()
+		expect(path).toContain('last-30-days')
+		expect(path).toEndWith('last-30-days.context.md')
+	})
+
+	test('getContextPath uses outdir when provided', () => {
+		const path = getContextPath('/tmp/custom-outdir')
+		expect(path).toBe('/tmp/custom-outdir/last-30-days.context.md')
 	})
 })
 
@@ -865,6 +880,64 @@ describe('cli', () => {
 		const stdout = new TextDecoder().decode(result.stdout)
 		const output = JSON.parse(stdout) as { mode: string }
 		expect(output.mode).toBe('reddit-only')
+	})
+
+	test('--outdir writes files to specified directory', () => {
+		const outdir = `/tmp/l30d-outdir-test-${Date.now()}`
+		try {
+			const result = runCli(['test topic', '--mock', '--emit=json', `--outdir=${outdir}`])
+			expect(result.exitCode).toBe(0)
+			expect(existsSync(join(outdir, 'report.json'))).toBe(true)
+			expect(existsSync(join(outdir, 'report.md'))).toBe(true)
+			expect(existsSync(join(outdir, 'last-30-days.context.md'))).toBe(true)
+		} finally {
+			rmSync(outdir, { recursive: true, force: true })
+		}
+	})
+
+	test('--outdir with space-separated value works', () => {
+		const outdir = `/tmp/l30d-outdir-space-${Date.now()}`
+		try {
+			const result = runCli(['test topic', '--mock', '--emit=json', '--outdir', outdir])
+			expect(result.exitCode).toBe(0)
+			expect(existsSync(join(outdir, 'report.json'))).toBe(true)
+		} finally {
+			rmSync(outdir, { recursive: true, force: true })
+		}
+	})
+
+	test('--outdir creates directory if it does not exist', () => {
+		const base = `/tmp/l30d-outdir-nested-${Date.now()}`
+		const outdir = `${base}/sub/dir`
+		try {
+			const result = runCli(['test topic', '--mock', '--emit=json', `--outdir=${outdir}`])
+			expect(result.exitCode).toBe(0)
+			expect(existsSync(join(outdir, 'report.json'))).toBe(true)
+		} finally {
+			rmSync(base, { recursive: true, force: true })
+		}
+	})
+
+	test('--emit=path with --outdir returns correct path', () => {
+		const outdir = `/tmp/l30d-outdir-path-${Date.now()}`
+		try {
+			const result = runCli(['test topic', '--mock', '--emit=path', `--outdir=${outdir}`])
+			expect(result.exitCode).toBe(0)
+			const stdout = new TextDecoder().decode(result.stdout).trim()
+			expect(stdout).toBe(join(outdir, 'last-30-days.context.md'))
+		} finally {
+			rmSync(outdir, { recursive: true, force: true })
+		}
+	})
+
+	test('default behavior unchanged when --outdir omitted', () => {
+		const result = runCli(['test topic', '--mock', '--emit=path'])
+		expect(result.exitCode).toBe(0)
+		const stdout = new TextDecoder().decode(result.stdout).trim()
+		// Default path should use ~/.local/share/last-30-days/out/ (under test HOME)
+		expect(stdout).toContain('last-30-days')
+		expect(stdout).toContain('last-30-days.context.md')
+		expect(stdout).not.toContain('/tmp/l30d-outdir')
 	})
 })
 
