@@ -68,6 +68,7 @@ export {
 } from './lib/openai-reddit.js'
 // Rendering
 export {
+	getContextPath,
 	renderCompact,
 	renderContextSnippet,
 	renderFullReport,

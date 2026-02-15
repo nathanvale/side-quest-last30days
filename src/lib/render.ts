@@ -9,11 +9,6 @@ import { reportToDict } from './schema.js'
 
 const OUTPUT_DIR = join(homedir(), '.local', 'share', 'last-30-days', 'out')
 
-/** Ensure output directory exists. */
-function ensureOutputDir(): void {
-	mkdirSync(OUTPUT_DIR, { recursive: true })
-}
-
 /** Assess how much data is actually from the configured date range. */
 function assessDataFreshness(report: Report) {
 	const redditRecent = report.reddit.filter(
@@ -377,8 +372,10 @@ export function writeOutputs(
 	rawOpenai?: Record<string, unknown> | null,
 	rawXai?: Record<string, unknown> | null,
 	rawRedditEnriched?: Record<string, unknown>[] | null,
+	outdir?: string,
 ): void {
-	ensureOutputDir()
+	const dir = outdir || OUTPUT_DIR
+	mkdirSync(dir, { recursive: true })
 
 	// Clean stale raw files from previous runs
 	const rawFiles = [
@@ -388,7 +385,7 @@ export function writeOutputs(
 	]
 	for (const file of rawFiles) {
 		try {
-			unlinkSync(join(OUTPUT_DIR, file))
+			unlinkSync(join(dir, file))
 		} catch {
 			// ignore if not exists
 		}
@@ -396,36 +393,33 @@ export function writeOutputs(
 
 	// Write report files (always)
 	writeFileSync(
-		join(OUTPUT_DIR, 'report.json'),
+		join(dir, 'report.json'),
 		JSON.stringify(reportToDict(report), null, 2),
 	)
-	writeFileSync(join(OUTPUT_DIR, 'report.md'), renderFullReport(report))
+	writeFileSync(join(dir, 'report.md'), renderFullReport(report))
 	writeFileSync(
-		join(OUTPUT_DIR, 'last-30-days.context.md'),
+		join(dir, 'last-30-days.context.md'),
 		renderContextSnippet(report),
 	)
 
 	if (rawOpenai) {
 		writeFileSync(
-			join(OUTPUT_DIR, 'raw_openai.json'),
+			join(dir, 'raw_openai.json'),
 			JSON.stringify(rawOpenai, null, 2),
 		)
 	}
 	if (rawXai) {
-		writeFileSync(
-			join(OUTPUT_DIR, 'raw_xai.json'),
-			JSON.stringify(rawXai, null, 2),
-		)
+		writeFileSync(join(dir, 'raw_xai.json'), JSON.stringify(rawXai, null, 2))
 	}
 	if (rawRedditEnriched) {
 		writeFileSync(
-			join(OUTPUT_DIR, 'raw_reddit_threads_enriched.json'),
+			join(dir, 'raw_reddit_threads_enriched.json'),
 			JSON.stringify(rawRedditEnriched, null, 2),
 		)
 	}
 }
 
 /** Get path to context file. */
-export function getContextPath(): string {
-	return join(OUTPUT_DIR, 'last-30-days.context.md')
+export function getContextPath(outdir?: string): string {
+	return join(outdir || OUTPUT_DIR, 'last-30-days.context.md')
 }
